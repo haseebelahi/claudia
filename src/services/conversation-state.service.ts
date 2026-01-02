@@ -1,9 +1,11 @@
 import { config } from '../config';
 import { Conversation, ConversationState, Message } from '../models';
 
+const SAVE_INTERVAL_MS = 300000; // 5 minutes
+const SAVE_MESSAGE_THRESHOLD = 10; // 10 messages
+
 export class ConversationStateService {
   private conversations: Map<string, ConversationState> = new Map();
-  private timeouts: Map<string, NodeJS.Timeout> = new Map();
   private loadedUsers: Set<string> = new Set();
 
   constructor() {}
@@ -16,16 +18,13 @@ export class ConversationStateService {
       messages,
       lastActivity: conversation.updatedAt,
       isActive: conversation.status === 'active',
+      lastSavedAt: conversation.updatedAt,
+      messagesSinceLastSave: 0,
     };
 
     if (conversation.userId) {
       this.conversations.set(conversation.userId, state);
       this.loadedUsers.add(conversation.userId);
-      
-      // Restart timeout if conversation is active
-      if (state.isActive && state.messages.length > 0) {
-        this.resetTimeout(conversation.userId);
-      }
     }
   }
 
@@ -47,6 +46,8 @@ export class ConversationStateService {
         messages: [],
         lastActivity: new Date(),
         isActive: true,
+        lastSavedAt: null,
+        messagesSinceLastSave: 0,
       };
       this.conversations.set(userId, state);
     }
@@ -80,14 +81,43 @@ export class ConversationStateService {
     const state = this.getOrCreateConversation(userId);
     state.messages.push(message);
     state.lastActivity = new Date();
+    state.messagesSinceLastSave++;
 
     // Trim conversation if too long
     if (state.messages.length > config.app.maxConversationLength) {
       state.messages = state.messages.slice(-config.app.maxConversationLength);
     }
+  }
 
-    // Reset inactivity timeout
-    this.resetTimeout(userId);
+  shouldSaveConversation(userId: string): boolean {
+    const state = this.conversations.get(userId);
+    if (!state) return false;
+
+    // Save if 10+ messages since last save
+    if (state.messagesSinceLastSave >= SAVE_MESSAGE_THRESHOLD) {
+      return true;
+    }
+
+    // Save if 5+ minutes since last save
+    if (state.lastSavedAt) {
+      const timeSinceLastSave = Date.now() - state.lastSavedAt.getTime();
+      if (timeSinceLastSave >= SAVE_INTERVAL_MS) {
+        return true;
+      }
+    } else {
+      // Never saved before, should save
+      return true;
+    }
+
+    return false;
+  }
+
+  markConversationSaved(userId: string): void {
+    const state = this.conversations.get(userId);
+    if (state) {
+      state.lastSavedAt = new Date();
+      state.messagesSinceLastSave = 0;
+    }
   }
 
   getMessages(userId: string): Message[] {
@@ -112,34 +142,19 @@ export class ConversationStateService {
     }
 
     state.isActive = false;
-    this.clearTimeout(userId);
 
-    // Keep the conversation in memory for a short while for extraction
-    // It will be cleaned up on next conversation start
+    // Clean up after a grace period (1 hour)
+    setTimeout(() => {
+      this.conversations.delete(userId);
+      this.loadedUsers.delete(userId);
+      console.log(`Cleaned up conversation for user ${userId}`);
+    }, 3600000);
+
     return state;
   }
 
   clearConversation(userId: string): void {
     this.conversations.delete(userId);
-    this.clearTimeout(userId);
-  }
-
-  private resetTimeout(userId: string): void {
-    this.clearTimeout(userId);
-
-    const timeout = setTimeout(() => {
-      console.log(`Conversation timeout for user ${userId}`);
-      this.endConversation(userId);
-    }, config.app.conversationTimeoutMs);
-
-    this.timeouts.set(userId, timeout);
-  }
-
-  private clearTimeout(userId: string): void {
-    const timeout = this.timeouts.get(userId);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.timeouts.delete(userId);
-    }
+    this.loadedUsers.delete(userId);
   }
 }

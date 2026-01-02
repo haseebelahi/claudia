@@ -108,6 +108,34 @@ export class SupabaseService {
     return this.mapConversation(data);
   }
 
+  async getNonExtractedConversationsForUser(userId: string): Promise<Conversation[]> {
+    const { data, error } = await this.client
+      .from('conversations')
+      .select('*')
+      .eq('user_id', userId)
+      .neq('status', 'extracted')
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.error(`Failed to fetch conversations for user ${userId}:`, error);
+      throw new Error(`Failed to fetch conversations: ${error.message}`);
+    }
+
+    return data.map(this.mapConversation);
+  }
+
+  async deleteConversation(id: string): Promise<void> {
+    const { error } = await this.client
+      .from('conversations')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error(`Failed to delete conversation ${id}:`, error);
+      throw new Error(`Failed to delete conversation: ${error.message}`);
+    }
+  }
+
   // Knowledge entry methods
   async createKnowledgeEntry(data: KnowledgeEntryInsert): Promise<KnowledgeEntry> {
     const { data: entry, error } = await this.client

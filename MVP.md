@@ -20,9 +20,8 @@ An active knowledge extraction assistant that lives in a chat platform, mirrors 
 ## Interaction Model
 
 - Lives in Telegram (or Slack/Discord)
-- Fully reactive + optional notifications for activity spikes and scheduled check-ins
+- Fully reactive + optional notifications for scheduled check-ins
 - Casual conversation tone that learns your voice over time
-- Actively challenges you on contradictions and blind spots
 
 ## Use Cases
 
@@ -50,10 +49,10 @@ An active knowledge extraction assistant that lives in a chat platform, mirrors 
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
 | Chat Interface | Telegram Bot | Simple API, mobile + desktop, free |
-| LLM | Claude API (Anthropic) | Good at conversation, strong structured extraction |
+| LLM | OpenRouter (model-agnostic) | Flexible - can use Claude, GPT-4, Mistral, etc. via Vercel AI SDK |
 | Database | Supabase (Postgres + pgvector) | Free tier, built-in vector search, managed |
 | Embeddings | OpenAI text-embedding-3-small | Cheap, good quality |
-| Hosting | Vercel or Railway | Free tier, handles webhooks |
+| Hosting | Railway.app | $5/month free tier, perfect for long-running bots |
 
 ---
 
@@ -63,6 +62,7 @@ An active knowledge extraction assistant that lives in a chat platform, mirrors 
 -- Conversations table
 CREATE TABLE conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT, -- Telegram user ID for multi-user support
     started_at TIMESTAMP DEFAULT NOW(),
     raw_transcript TEXT,
     status TEXT DEFAULT 'active', -- active | extracted | archived
@@ -75,7 +75,7 @@ CREATE TABLE conversations (
 CREATE TABLE knowledge_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID REFERENCES conversations(id),
-    type TEXT, -- problem_solution | insight | decision | learning
+    type TEXT, -- problem_solution | insight | decision | learning | fact | preference | event | relationship | goal | article_summary | research
     problem TEXT,
     context TEXT,
     solution TEXT,
@@ -99,6 +99,26 @@ CREATE TABLE activity_signals (
 -- Enable vector similarity search
 CREATE INDEX ON knowledge_entries USING ivfflat (embedding vector_cosine_ops);
 ```
+
+---
+
+## Knowledge Types
+
+The system supports multiple knowledge entry types beyond problem/solution pairs:
+
+| Type | Description | Input Method |
+|------|-------------|--------------|
+| `problem_solution` | Debugging stories, fixes, workarounds | Conversation + `/extract` |
+| `insight` | Realizations, "aha" moments | Conversation + `/extract` |
+| `decision` | Choices made with rationale | Conversation + `/extract` |
+| `learning` | General learnings, takeaways | Conversation + `/extract` |
+| `fact` | Quick facts, dates, numbers | `/remember` |
+| `preference` | Personal preferences (tools, airlines, etc.) | `/remember` |
+| `event` | Important dates (birthdays, anniversaries) | `/remember` |
+| `relationship` | People and context about them | `/remember` |
+| `goal` | Things you're working toward | `/remember` |
+| `article_summary` | Summarized web articles | `/read [url]` |
+| `research` | Compiled research from web search | `/research [topic]` |
 
 ---
 
@@ -142,33 +162,26 @@ You: "we good"
 
 ## System Prompts
 
-### Conversation Mode
-```
-You are a knowledge extraction assistant that mirrors the user's
-casual communication style. Your job is to help them articulate
-what they learned from recent experiences.
+The assistant is **self-aware** - it knows what it is, your background, and the project goals.
 
-- Be conversational, not formal
-- Ask follow-up questions to get clarity on: the problem,
-  what they tried, what worked, and what they'd do differently
-- Don't be annoying - 2-3 follow-ups max, then wrap up
-- When the conversation feels complete, confirm you've captured it
-```
+### Conversation Mode
+The bot knows:
+- It's a personal knowledge extraction assistant built for an 8+ year SWE
+- Tech stack: Telegram, OpenRouter/Claude, OpenAI embeddings, Supabase
+- Your interests: Tech, science, personal finance, investing
+- Its purpose: Extract learnings for future retrieval and synthesis
+- That you're actively building it (meta-awareness!)
+
+Full prompts in `src/services/llm.service.ts` and documented in [docs/architecture/SYSTEM_PROMPTS.md](docs/architecture/SYSTEM_PROMPTS.md)
 
 ### Extraction Mode
-```
-Extract structured knowledge from this conversation.
-
-Return JSON:
-{
-  "type": "problem_solution" | "insight" | "decision" | "learning",
-  "problem": "one sentence problem statement",
-  "context": "what they were working on",
-  "solution": "what resolved it",
-  "learnings": ["key takeaway 1", "key takeaway 2"],
-  "tags": ["kubernetes", "jvm", "memory", "debugging"]
-}
-```
+Extracts structured knowledge with:
+- Type classification (see Knowledge Types section above)
+- Concise problem/solution statements (for applicable types)
+- 2-5 actionable learnings
+- 3-7 relevant tags (lowercase, underscored)
+- Full context for future semantic search
+- Auto-categorization with user confirmation for `/remember` entries
 
 ---
 
@@ -177,10 +190,10 @@ Return JSON:
 | Service | Monthly Cost |
 |---------|--------------|
 | Supabase | $0 (free tier) |
-| Claude API | $5-15 |
+| Railway.app | $0 (free $5 credit/month) |
+| OpenRouter (LLM) | $2-5 |
 | OpenAI Embeddings | $1-2 |
-| Vercel | $0 (free tier) |
-| **Total** | **~$10-20/month** |
+| **Total** | **~$3-7/month** |
 
 ---
 
@@ -212,70 +225,134 @@ Return JSON:
 | Agency | Drafts for review | Prepares content, user always reviews |
 | Style learning | From conversations | Gradual organic learning |
 | Longevity | Core infrastructure | Built for 10+ years |
-| Challenges | Active | Surface contradictions and blind spots |
 | Budget | $20-50/month | Moderate investment |
 | Build approach | Mostly assemble | Stitch existing tools together |
 | First milestone | Extraction works | One good knowledge conversation |
+| Quick knowledge input | `/remember` command | Bypass conversation for simple facts |
+| Category confirmation | Bot confirms | Reduces silent misclassification |
+| Search API | Google Custom Search | Free tier (100/day) sufficient for personal use |
+| Research depth | Shallow v1 | Top 3 results, fast and cheap |
+| Research storage | Always save | No prompt needed, automatic |
+| Multi-user | Deprioritized | Single user focus for now |
 
 ---
 
 ## Implementation Roadmap
 
-### Phase 1: Core Extraction Loop (MVP - "Extraction Works")
+### Phase 1: Core Extraction Loop (MVP - "Extraction Works") ✅ **COMPLETE**
 **Goal:** You can have a conversation, bot extracts and saves knowledge
 
+**Setup & Infrastructure:**
 - [x] Telegram bot created via BotFather
 - [x] Supabase project created
 - [x] OpenRouter API key obtained (using Vercel AI SDK for flexibility)
 - [x] OpenAI API key obtained (for embeddings)
-- [x] Supabase database tables created
+- [x] Supabase database tables created (conversations, knowledge_entries, activity_signals)
+- [x] User ID column added for multi-user support
 - [x] Project scaffold (TypeScript/Node)
+- [x] Environment configuration with dotenv
+
+**Core Functionality:**
 - [x] Telegram bot handler with message handling
 - [x] LLM integration for conversation mode (via Vercel AI SDK + OpenRouter)
-- [x] Message persistence (track conversation state in-memory)
+- [x] Conversation state tracking (in-memory with DB persistence)
+- [x] Auto-save conversation on every message
+- [x] Conversation persistence across server restarts (lazy-loading)
 - [x] Extraction trigger (`/extract` command)
 - [x] Structured knowledge extraction → storage with embeddings
-- [x] Basic `/status` command to confirm it's working
-- [ ] Install Node.js and dependencies
-- [ ] Configure `.env` with API keys
-- [ ] Test end-to-end conversation flow
+- [x] OpenAI embeddings generation for semantic search
 
-### Phase 2: Retrieval & Recall
-**Goal:** You can query "what do I know about X" and get answers
+**Bot Commands:**
+- [x] `/status` - Show conversation status
+- [x] `/new` - Start new conversation (prompts to extract/clear existing)
+- [x] `/extract` - Save knowledge with embeddings
+- [x] `/clear` - Discard conversation and start fresh
 
-- [ ] OpenAI embeddings integration
-- [ ] Generate embeddings for knowledge entries on save
-- [ ] `/recall [topic]` command with vector search
+**Advanced Features:**
+- [x] Self-aware system prompts (knows project context, your background)
+- [x] Multi-user support (isolated conversations per Telegram user)
+- [x] Conversation timeout (5 min configurable)
+- [x] Graceful error handling
+
+**Deployment:**
+- [x] Deployed to Railway.app
+- [x] Running 24/7 in production
+- [x] Auto-deploy on git push
+- [x] Environment variables configured
+
+**Documentation:**
+- [x] README.md - Project overview and quick start
+- [x] TODO.md - Roadmap with status
+- [x] USAGE.md - User guide with all commands
+- [x] docs/development/AGENTS.md - Guidelines for AI coding agents
+- [x] docs/development/SETUP.md - Development setup instructions
+- [x] docs/development/LOCAL_TESTING.md - Local testing guide
+- [x] docs/deployment/DEPLOYMENT.md - Deployment guide (5+ platforms)
+- [x] docs/deployment/POST_DEPLOYMENT_CHECKLIST.md - Verification steps
+- [x] docs/architecture/CONVERSATION_MANAGEMENT.md - Conversation lifecycle
+- [x] docs/architecture/CONVERSATION_PERSISTENCE.md - Restart behavior
+- [x] docs/architecture/SYSTEM_PROMPTS.md - Self-awareness documentation
+
+**Status:** 🟢 **LIVE IN PRODUCTION**
+
+### Phase 2: Retrieval & Expanded Input
+**Goal:** Query knowledge, quick-add facts, and ingest external content
+
+#### Phase 2A: Retrieval & Quick Storage
+- [ ] `/recall [topic]` command with semantic search
+- [ ] Generate embedding for search query
 - [ ] Relevance ranking and result formatting
+- [ ] `/remember [fact]` command for quick fact storage
+- [ ] Auto-categorization (fact, preference, event, relationship, goal)
+- [ ] Category confirmation with correction option
 - [ ] Decay weight in retrieval scoring
 
-### Phase 3: Passive Data Ingestion
-**Goal:** Your "what you've seen" layer is populated
+#### Phase 2B: Article Ingestion
+- [ ] `/read [url]` command
+- [ ] Web page fetching and content extraction
+- [ ] LLM summarization of article content
+- [ ] Optional extraction to knowledge base as `article_summary` type
+- [ ] Handle common article formats (blogs, docs, news)
 
-- [ ] Google Takeout parser (browser history, search history)
-- [ ] Twitter/X bookmark export parser
-- [ ] GitHub API integration (repos, commits, starred repos)
-- [ ] Batch ingestion pipeline with embeddings
-- [ ] Activity signals table population
-- [ ] Unified search across knowledge + activity
+#### Phase 2C: Web Research
+- [ ] `/research [topic]` command
+- [ ] Google Custom Search API integration (free tier: 100/day)
+- [ ] Fetch and parse top 3 search results
+- [ ] LLM compilation of findings
+- [ ] Auto-save as `research` type knowledge entry
+- [ ] Source attribution in stored entry
 
-### Phase 4: Unified Retrieval & Synthesis
-**Goal:** "Give me a blog topic" works end-to-end
+### Phase 3: Profile Building
+**Goal:** Build rich context about you for future synthesis
 
-- [ ] Blended retrieval (learned + seen layers)
-- [ ] Synthesis prompts for LinkedIn post suggestions
-- [ ] Synthesis prompts for blog topic suggestions
-- [ ] Full outline generation for tech talks
+- [ ] Organic conversations about background, career, projects
+- [ ] Extract as profile knowledge entries
+- [ ] Store work history, achievements, key projects
+- [ ] Capture professional opinions and takes
+- [ ] Foundation for LinkedIn/blog synthesis
+
+### Phase 4: Synthesis
+**Goal:** Generate content drafts from your knowledge
+
+- [ ] `/draft linkedin [topic]` - pull relevant knowledge, generate post draft
+- [ ] `/draft blog [topic]` - longer form content generation
+- [ ] Style learning from provided examples (paste posts you liked)
 - [ ] Platform-aware framing in outputs
+- [ ] Iterative refinement through conversation
 
-### Phase 5: Polish & Intelligence
-**Goal:** System gets smarter over time
+### Phase 5: Life Coordinator
+**Goal:** Help plan and track personal life
 
-- [ ] Quality ratings after conversations
-- [ ] Curation session UI/flow
-- [ ] Decay weight automatic adjustment
-- [ ] Contradiction detection across knowledge entries
-- [ ] Contextual push (explicit context mode)
-- [ ] Style mirroring (learn user's voice from conversations)
-- [ ] Scheduled check-in notifications
+- [ ] Planning mode for events/trips
+- [ ] Proactive suggestions (scheduled jobs, weekend prompts)
+- [ ] State tracking (visited, completed, to-do lists)
+- [ ] Deep research mode (top 10 results + follow promising links)
+- [ ] Reminder system for important dates/events
+
+### Phase 6: Integrations (Future)
+**Goal:** Connect to external systems
+
+- [ ] Calendar integration (Google Calendar, etc.)
+- [ ] Passive layer ingestion (browser history, GitHub, bookmarks)
 - [ ] Activity spike detection and prompts
+- [ ] Export/backup functionality

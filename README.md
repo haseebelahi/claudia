@@ -1,147 +1,144 @@
 # Personal Knowledge Assistant
 
-A Telegram-based personal knowledge assistant that extracts and recalls learned knowledge through conversational interaction.
+> Capture what you've **learned**, not just what you've seen.
 
-## Tech Stack
+A Telegram bot that extracts structured knowledge from conversations, storing learnings with semantic search for future retrieval and synthesis.
 
-- **Node.js/TypeScript** - Runtime and language
-- **Telegram Bot API** - Chat interface  
-- **Vercel AI SDK + OpenRouter** - LLM integration (model-agnostic)
-- **OpenAI** - Embeddings generation
-- **Supabase** - Database (Postgres + pgvector)
+## What It Does
 
-## Setup
+Have natural conversations about what you've learned. The bot extracts structured knowledge:
+- **Problem** you solved
+- **Solution** you discovered  
+- **Key learnings** to remember
+- **Tags** for organization
+- **Semantic embeddings** for smart search
 
-### Prerequisites
+All stored in a searchable database for future recall.
 
-- Node.js >= 18.0.0
-- Telegram account
-- OpenRouter API key (or direct Claude/OpenAI access)
-- OpenAI API key (for embeddings)
-- Supabase account
+## Quick Start
 
-### Installation
-
-1. **Clone and install dependencies:**
 ```bash
+# Install
 npm install
-```
 
-2. **Set up environment variables:**
-```bash
+# Configure (see docs/development/SETUP.md)
 cp .env.example .env
-# Edit .env with your actual credentials
-```
+# Edit .env with your API keys
 
-Required variables:
-- `TELEGRAM_BOT_TOKEN` - From @BotFather on Telegram
-- `OPENROUTER_API_KEY` - From openrouter.ai
-- `LLM_MODEL` - Model to use (e.g., `anthropic/claude-3.5-sonnet`)
-- `OPENAI_API_KEY` - From platform.openai.com
-- `SUPABASE_URL` - Your Supabase project URL
-- `SUPABASE_KEY` - Your Supabase anon key
+# Setup database
+# Run scripts/init-database.sql in Supabase
 
-3. **Set up database:**
-```bash
-# Run scripts/init-database.sql in your Supabase SQL editor
-```
-
-4. **Run the bot:**
-```bash
-# Development (with auto-reload)
+# Run
 npm run dev
-
-# Production build
-npm run build
-npm start
 ```
 
-## Usage
+**Required:** Node.js 18+, Telegram account, OpenRouter API key, OpenAI API key, Supabase account
 
-### Bot Commands
+See [docs/development/SETUP.md](docs/development/SETUP.md) for detailed setup.
 
-- `/status` - Show current conversation status
-- `/new` - Start new conversation (prompts to extract/clear existing)
-- `/extract` - Save current conversation as structured knowledge
-- `/clear` - Discard current conversation and start fresh
+## Usage Example
 
-### Conversation Flow
-
-1. Start chatting with the bot naturally
-2. Share what you've learned or problems you've solved
-3. Bot asks follow-up questions to clarify
-4. Use `/extract` to save the knowledge
-5. Bot extracts structured knowledge with embeddings
-
-Example:
 ```
-You: "just spent 3 hours debugging a kubernetes issue"
-Bot: "Nice! What was the issue? Walk me through what happened."
-You: "pod kept getting OOMKilled even though memory limit was way higher than usage"
-Bot: "Ah, the classic memory mysteries. What did you discover?"
-You: "JVM wasn't respecting container limits. Had to upgrade to JVM 17"
-Bot: "Got it - so JVM 17+ has better container awareness. What's the takeaway 
-     you'd want to remember for next time?"
-You: "Always check JVM version first when debugging memory issues in containers"
-Bot: "Solid learning. Sounds like we've captured the key points - feel free 
-     to /extract when you're ready to save this!"
-You: "/extract"
-Bot: "Extracting knowledge from our conversation..."
+You: "I just debugged a tricky Kubernetes issue"
+Bot: "Tell me about it! What happened?"
+
+You: "Pod kept restarting due to liveness probe timeouts"
+Bot: "What did you learn that you'd want to remember?"
+
+You: "Always adjust probe timing for app startup"
+Bot: "Got it. Use /extract when ready to save!"
+
+You: /extract
 Bot: "✅ Knowledge extracted and saved!"
 ```
 
-**Self-Aware Assistant**: The bot knows it's a knowledge extraction tool, understands 
-your background as an 8+ year software engineer, and guides conversations toward 
-extractable learnings. See `SYSTEM_PROMPTS.md` for details.
+See [USAGE.md](USAGE.md) for complete command reference.
+
+## Tech Stack
+
+- **Telegram Bot** - Always-available interface
+- **OpenRouter + Vercel AI SDK** - Model-agnostic LLM (Claude, GPT-4, etc.)
+- **OpenAI Embeddings** - Semantic search
+- **Supabase** - Postgres + pgvector for storage
+- **Railway.app** - 24/7 hosting
+
+**Cost:** ~$3-7/month
+
+## Current Status
+
+**✅ Phase 1 Complete** - Core extraction working, deployed and live
+
+- Natural conversation with knowledge extraction
+- Multi-user support with isolated conversations  
+- Persistence across server restarts
+- Smart auto-save (every 10 messages or 5 minutes)
+- Self-aware assistant with project context
+
+**🚧 Phase 2 Next** - Add `/recall` for semantic search (infrastructure ready)
+
+**🔮 Future** - Passive ingestion (browser history, GitHub), content synthesis (LinkedIn posts, blog ideas, tech talks)
+
+See [MVP.md](MVP.md) for full vision and [TODO.md](TODO.md) for detailed roadmap.
+
+## Documentation
+
+### For Users
+- **[USAGE.md](USAGE.md)** - How to use the bot
+- **[MVP.md](MVP.md)** - Vision and future phases
+
+### For Developers  
+- **[docs/development/SETUP.md](docs/development/SETUP.md)** - Development setup
+- **[docs/development/AGENTS.md](docs/development/AGENTS.md)** - AI coding guidelines
+- **[docs/development/LOCAL_TESTING.md](docs/development/LOCAL_TESTING.md)** - Local testing
+
+### For Deployment
+- **[docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md)** - Deployment guide
+- **[docs/deployment/POST_DEPLOYMENT_CHECKLIST.md](docs/deployment/POST_DEPLOYMENT_CHECKLIST.md)** - Verification
+
+### Architecture
+- **[docs/architecture/CONVERSATION_MANAGEMENT.md](docs/architecture/CONVERSATION_MANAGEMENT.md)** - Conversation lifecycle
+- **[docs/architecture/CONVERSATION_PERSISTENCE.md](docs/architecture/CONVERSATION_PERSISTENCE.md)** - Restart behavior  
+- **[docs/architecture/SYSTEM_PROMPTS.md](docs/architecture/SYSTEM_PROMPTS.md)** - Self-awareness
 
 ## Architecture
 
 ```
 src/
-├── config/              # Configuration management
+├── config/              # Environment configuration
 ├── handlers/            # Telegram bot handlers
 ├── models/              # TypeScript interfaces
+├── repositories/        # Database access layer
 ├── services/            # External API integrations
-│   ├── llm.service.ts          # LLM (via Vercel AI SDK)
-│   ├── openai.service.ts       # Embeddings
-│   ├── supabase.service.ts     # Database
-│   └── conversation-state.service.ts  # In-memory state
+│   ├── llm.service.ts              # Vercel AI SDK + OpenRouter
+│   ├── openai.service.ts           # Embeddings with retry
+│   ├── supabase.service.ts         # Database
+│   └── conversation-state.service.ts # State management
 └── index.ts             # Entry point
 ```
 
 ## Development
 
 ```bash
-# Type checking
-npm run type-check
-
-# Build
-npm run build
-
-# Development with watch mode
-npm run dev
+npm test              # Run tests
+npm run type-check    # TypeScript checks
+npm run dev           # Development mode
+npm run build         # Build for production
 ```
 
-## Deployment (Vercel)
+## Deployment
 
-This project can be deployed to Vercel as a long-running process:
+Currently live on **Railway.app** with auto-deploy on push.
 
-1. Install Vercel CLI: `npm i -g vercel`
-2. Run: `vercel`
-3. Set environment variables in Vercel dashboard
-4. The bot will run as a serverless function
+Supports: Railway, Render, DigitalOcean, VPS, Docker
 
-Note: For production, consider using Vercel's Background Functions or deploying to Railway/Render for long-running processes.
-
-## Future Enhancements (Phase 2+)
-
-- [ ] `/recall [topic]` - Search knowledge by topic
-- [ ] Automatic conversation end detection
-- [ ] Quality ratings for conversations
-- [ ] Time decay for knowledge relevance
-- [ ] Passive data ingestion (browser history, GitHub)
-- [ ] Synthesis features (blog topics, LinkedIn posts)
+See [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) for platform-specific guides.
 
 ## License
 
 ISC
+
+---
+
+**Status:** Phase 1 complete ✅ | Phase 2 starting 🚧  
+**Deployment:** Live on Railway.app  
+**Start using:** Message your Telegram bot!

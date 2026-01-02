@@ -21,7 +21,6 @@ interface Config {
   app: {
     nodeEnv: string;
     port: number;
-    conversationTimeoutMs: number;
     maxConversationLength: number;
   };
 }
@@ -53,7 +52,6 @@ export const config: Config = {
   app: {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT || '3000', 10),
-    conversationTimeoutMs: parseInt(process.env.CONVERSATION_TIMEOUT_MS || '300000', 10),
-    maxConversationLength: parseInt(process.env.MAX_CONVERSATION_LENGTH || '50', 10),
+    maxConversationLength: parseInt(process.env.MAX_CONVERSATION_LENGTH || '200', 10),
   },
 };

@@ -9,4 +9,6 @@ export interface ConversationState {
   messages: Message[];
   lastActivity: Date;
   isActive: boolean;
+  lastSavedAt: Date | null;
+  messagesSinceLastSave: number;
 }
