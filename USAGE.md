@@ -98,6 +98,104 @@ These conversations have not been extracted yet:
 
 ---
 
+## 🔍 Knowledge Commands
+
+### `/recall` `[topic]`
+Search your knowledge base using semantic search.
+
+**Arguments:**
+- `topic`: What you want to search for (natural language query)
+
+**What happens:**
+1. Generates an embedding from your search query
+2. Searches for similar knowledge entries in your personal database
+3. Returns up to 5 most relevant results with similarity scores
+
+**Output includes:**
+- Entry type (Problem & Solution, Insight, Fact, etc.)
+- Similarity percentage
+- Problem/summary
+- Solution/answer
+- Key learnings (first 2)
+- Tags
+
+**Example:**
+```
+You: /recall kubernetes memory issues
+Bot: 🔍 Searching for "kubernetes memory issues"...
+
+🧠 Found 2 results
+
+1. Problem & Solution (85% match)
+📅 Jan 1, 2026
+📌 K8s pod getting OOMKilled despite high memory limits
+💡 Upgraded to JVM 17 which has container support by default
+📝 Learnings:
+  • Check JVM version first for memory issues
+  • JVM 17+ has better container awareness
+🏷 kubernetes, jvm, memory, debugging
+```
+
+**When to use:**
+- Looking for past solutions to problems
+- Recalling what you learned about a topic
+- Finding related knowledge before diving into something
+
+---
+
+### `/remember` `[what to remember]`
+Quickly save a fact, preference, event, relationship, or goal without a full conversation.
+
+**Arguments:**
+- `what to remember`: The fact or information you want to save
+
+**What happens:**
+1. LLM analyzes and categorizes your input
+2. Shows you the proposed category with inline buttons
+3. You confirm or change the category
+4. Entry is saved with embeddings for future search
+
+**Categories:**
+| Type | Description | Example |
+|------|-------------|---------|
+| Fact | Quick facts, data, numbers | "Python 3.12 was released October 2023" |
+| Preference | Personal preferences | "I prefer Delta airlines for domestic flights" |
+| Event | Important dates | "Mom's birthday is March 15" |
+| Relationship | People context | "John Smith is my manager at Acme Corp" |
+| Goal | Aspirations | "I want to learn Rust this year" |
+
+**Example:**
+```
+You: /remember My favorite coffee shop is Blue Bottle in Hayes Valley
+Bot: Analyzing what you want to remember...
+
+📝 I'll remember this as:
+
+Type: Preference
+Summary: Favorite coffee shop is Blue Bottle in Hayes Valley
+Tags: coffee, hayes_valley, san_francisco, preference
+
+Is this correct?
+[✅ Preference] [🔄 Change] [❌ Cancel]
+
+You: [clicks ✅ Preference]
+Bot: ✅ Saved!
+     Type: Preference
+     Summary: Favorite coffee shop is Blue Bottle in Hayes Valley
+     Tags: coffee, hayes_valley, san_francisco
+
+     Use /recall to search your knowledge later.
+```
+
+**When to use:**
+- Quick facts you want to remember
+- Personal preferences for future reference
+- Important dates (birthdays, anniversaries)
+- People and context about them
+- Goals you're working toward
+
+---
+
 ## 💾 Conversation Management Commands
 
 ### `/extract`
@@ -338,6 +436,8 @@ Conversations stay active indefinitely - no 5-minute timeout!
 | `/status` | Show current conversation status | None |
 | `/show` | Display complete conversation | None |
 | `/history` | List previous conversations | None |
+| `/recall` | Search knowledge base | `[topic]` |
+| `/remember` | Quick-save a fact/preference/etc. | `[what to remember]` |
 | `/extract` | Save conversation as knowledge | None |
 | `/clear` | Discard current conversation | None |
 | `/discard` | Delete specific conversation | `conversation_id` |
@@ -345,4 +445,4 @@ Conversations stay active indefinitely - no 5-minute timeout!
 
 ---
 
-**💡 Tip:** Most of the time, you don't need commands - just chat naturally and use `/extract` or `/clear` when done!
+**💡 Tip:** Most of the time, you don't need commands - just chat naturally and use `/extract` or `/clear` when done! Use `/recall` to find past knowledge and `/remember` for quick facts.

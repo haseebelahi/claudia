@@ -138,19 +138,28 @@ export class SupabaseService {
 
   // Knowledge entry methods
   async createKnowledgeEntry(data: KnowledgeEntryInsert): Promise<KnowledgeEntry> {
+    const insertData: Record<string, unknown> = {
+      type: data.type,
+      problem: data.problem,
+      context: data.context,
+      solution: data.solution,
+      learnings: data.learnings || [],
+      tags: data.tags || [],
+      embedding: data.embedding,
+      decay_weight: data.decayWeight || 1.0,
+    };
+
+    // Optional fields
+    if (data.conversationId) {
+      insertData.conversation_id = data.conversationId;
+    }
+    if (data.userId) {
+      insertData.user_id = data.userId;
+    }
+
     const { data: entry, error } = await this.client
       .from('knowledge_entries')
-      .insert({
-        conversation_id: data.conversationId,
-        type: data.type,
-        problem: data.problem,
-        context: data.context,
-        solution: data.solution,
-        learnings: data.learnings || [],
-        tags: data.tags || [],
-        embedding: data.embedding,
-        decay_weight: data.decayWeight || 1.0,
-      })
+      .insert(insertData)
       .select()
       .single();
 
@@ -165,13 +174,21 @@ export class SupabaseService {
   async searchKnowledge(
     embedding: number[],
     threshold: number = 0.7,
-    limit: number = 10
+    limit: number = 10,
+    userId?: string
   ): Promise<KnowledgeSearchResult[]> {
-    const { data, error } = await this.client.rpc('match_knowledge', {
+    const rpcParams: Record<string, unknown> = {
       query_embedding: embedding,
       match_threshold: threshold,
       match_count: limit,
-    });
+    };
+
+    // Add user filter if provided
+    if (userId) {
+      rpcParams.filter_user_id = userId;
+    }
+
+    const { data, error } = await this.client.rpc('match_knowledge', rpcParams);
 
     if (error) {
       console.error('Failed to search knowledge:', error);
@@ -181,6 +198,7 @@ export class SupabaseService {
     return data.map((item: any) => ({
       id: item.id,
       conversationId: item.conversation_id,
+      userId: item.user_id,
       type: item.type,
       problem: item.problem,
       context: item.context,
@@ -211,6 +229,7 @@ export class SupabaseService {
     return {
       id: data.id,
       conversationId: data.conversation_id,
+      userId: data.user_id,
       type: data.type,
       problem: data.problem,
       context: data.context,

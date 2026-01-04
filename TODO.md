@@ -67,26 +67,46 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 **Goal:** Search and retrieve past knowledge
 
-**Status:** Infrastructure ready, implementation pending
+**Status:** Phase 2A complete, Phase 2B/C pending
 
-### Infrastructure (Ready)
-- [x] Embeddings generated for all knowledge entries
-- [x] Vector search function in Supabase (`match_knowledge()`)
-- [x] Similarity scoring implemented
+### Phase 2A: Retrieval & Quick Storage ✅
+- [x] `/recall [topic]` command for semantic search
+  - [x] Generate embedding for search query
+  - [x] Query Supabase vector search function with user filter
+  - [x] Format and rank results by relevance
+  - [x] Display with similarity scores (top 5 results)
+- [x] `/remember [fact]` command for quick fact storage
+  - [x] Auto-categorization via LLM (fact, preference, event, relationship, goal)
+  - [x] Category confirmation with inline keyboard buttons
+  - [x] Correction option via category picker
+  - [x] Embeddings generation and storage
+- [x] Database updates
+  - [x] Added `user_id` column to `knowledge_entries`
+  - [x] Updated `match_knowledge` function with user filter
+  - [x] Expanded entry types for /remember
 
-### To Implement
-- [ ] `/recall [topic]` command for semantic search
-  - [ ] Generate embedding for search query
-  - [ ] Query Supabase vector search function
-  - [ ] Format and rank results by relevance
-  - [ ] Display with similarity scores
-  
-- [ ] Auto-context injection (optional)
+### Phase 2B: Article Ingestion (Pending)
+- [ ] `/read [url]` command
+  - [ ] Web page fetching and content extraction
+  - [ ] LLM summarization of article content
+  - [ ] Optional extraction to knowledge base as `article_summary` type
+  - [ ] Handle common article formats (blogs, docs, news)
+
+### Phase 2C: Web Research (Pending)
+- [ ] `/research [topic]` command
+  - [ ] Google Custom Search API integration (free tier: 100/day)
+  - [ ] Fetch and parse top 3 search results
+  - [ ] LLM compilation of findings
+  - [ ] Auto-save as `research` type knowledge entry
+  - [ ] Source attribution in stored entry
+
+### Future Improvements (Optional)
+- [ ] Auto-context injection
   - [ ] Search for related knowledge when conversation starts
   - [ ] Inject relevant past learnings into conversation context
   - [ ] Bot references past knowledge naturally
   
-- [ ] Duplicate detection (optional)
+- [ ] Duplicate detection
   - [ ] Before extraction, search for similar entries
   - [ ] Prompt user: "Similar to entry from 3 days ago - update or create new?"
   - [ ] Option to merge or keep separate
@@ -97,11 +117,9 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
   - [ ] Filter by knowledge type
   - [ ] Hybrid search (semantic + keyword)
 
-**Estimated Effort:** 2-4 hours for basic `/recall` command
-
 ---
 
-## Phase 3: Passive Data Ingestion 📋
+## Phase 3: Profile Building 📋
 
 **Goal:** Populate "what you've seen" layer
 
@@ -277,21 +295,21 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 ## Current Sprint (Next 2 Weeks)
 
-### Priority 1: Phase 2 - Basic Recall
-- [ ] Implement `/recall [topic]` command
-- [ ] Test with existing knowledge entries
-- [ ] Document usage in USAGE.md
+### Priority 1: Phase 2A - Retrieval & Quick Storage ✅
+- [x] Implement `/recall [topic]` command
+- [x] Implement `/remember [fact]` command
+- [x] Test with existing knowledge entries
+- [x] Document usage in USAGE.md
 
-### Priority 2: Polish Phase 1
-- [ ] Add unit tests for repositories
-- [ ] Add integration tests for extraction
-- [ ] Improve error handling in edge cases
+### Priority 2: Phase 2B - Article Ingestion
+- [ ] Implement `/read [url]` command
+- [ ] Add article content extraction
+- [ ] Test with various article formats
 
-### Priority 3: Documentation
-- [x] Reorganize documentation structure
-- [x] Create comprehensive README
-- [x] Create TODO roadmap (this file)
-- [ ] Update architecture diagrams
+### Priority 3: Phase 2C - Web Research
+- [ ] Set up Google Custom Search API
+- [ ] Implement `/research [topic]` command
+- [ ] Auto-save research to knowledge base
 
 ---
 
@@ -303,25 +321,24 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [x] Multi-user support working
 - [x] Persistence across restarts
 
-### Phase 2 (Next)
-- [ ] Successfully recall knowledge from 10+ entries
-- [ ] <2 second search response time
-- [ ] >0.7 relevance score for top results
+### Phase 2A ✅
+- [x] `/recall` command working with semantic search
+- [x] `/remember` command with auto-categorization
+- [x] User-scoped knowledge filtering
+
+### Phase 2B/C (Next)
+- [ ] Successfully summarize 10+ articles
+- [ ] Research command returns useful compilations
+- [ ] <3 second response time for /read
 
 ### Phase 3
-- [ ] 1000+ activity signals ingested
-- [ ] Unified search across knowledge + activity
-- [ ] <3 second response time for hybrid search
+- [ ] Profile knowledge built through conversations
+- [ ] Foundation for LinkedIn synthesis ready
 
 ### Phase 4
 - [ ] Generate 10+ useful LinkedIn post ideas
 - [ ] Generate 5+ blog outlines
 - [ ] Generate 3+ tech talk topics
-
-### Phase 5
-- [ ] 100+ knowledge entries with ratings
-- [ ] Contradiction detection working
-- [ ] Style mirroring noticeable in responses
 
 ---
 
@@ -330,12 +347,13 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 | Version | Date | Milestone |
 |---------|------|-----------|
 | 0.1.0 | 2026-01-01 | Phase 1 complete - Core extraction working |
-| 0.2.0 | TBD | Phase 2 - `/recall` command live |
-| 0.3.0 | TBD | Phase 3 - Passive ingestion working |
+| 0.2.0 | 2026-01-02 | Phase 2A complete - /recall and /remember commands |
+| 0.3.0 | TBD | Phase 2B/C - Article ingestion and web research |
+| 0.4.0 | TBD | Phase 3 - Profile building |
 | 1.0.0 | TBD | Phases 1-4 complete, production-ready |
 
 ---
 
 **Last Updated:** January 2, 2026  
-**Current Phase:** Phase 1 Complete ✅ → Phase 2 Starting 🚧  
-**Next Milestone:** `/recall` command implementation
+**Current Phase:** Phase 2A Complete ✅ → Phase 2B Starting 🚧  
+**Next Milestone:** `/read [url]` command implementation

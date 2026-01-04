@@ -16,9 +16,10 @@ export class KnowledgeRepository {
   async search(
     embedding: number[],
     threshold: number = 0.7,
-    limit: number = 10
+    limit: number = 10,
+    userId?: string
   ): Promise<KnowledgeSearchResult[]> {
-    return this.supabase.searchKnowledge(embedding, threshold, limit);
+    return this.supabase.searchKnowledge(embedding, threshold, limit, userId);
   }
 
   async findByConversationId(_conversationId: string): Promise<KnowledgeEntry[]> {

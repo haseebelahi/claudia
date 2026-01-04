@@ -2,7 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 
 import { config } from '../config';
-import { ExtractedKnowledge, Message } from '../models';
+import { CategorizationResult, ExtractedKnowledge, Message } from '../models';
 
 const CONVERSATION_SYSTEM_PROMPT = `You are a personal knowledge extraction assistant built for a software engineer with 8+ years of experience. You live in Telegram and help them capture what they've LEARNED (not just seen).
 
@@ -76,6 +76,34 @@ Return ONLY valid JSON in this exact format:
 - Tags should be lowercase, use underscores for multi-word (e.g., "kubernetes", "jvm_memory", "debugging")
 - Return ONLY the JSON object, no markdown formatting, no extra text`;
 
+const CATEGORIZATION_SYSTEM_PROMPT = `You are a categorization system for a personal knowledge assistant. Your job is to categorize quick facts/notes that the user wants to remember.
+
+## Categories
+- fact: Quick facts, data points, numbers, dates, information (e.g., "Python 3.12 was released in October 2023")
+- preference: Personal preferences for tools, services, products, approaches (e.g., "I prefer Delta airlines for domestic flights")
+- event: Important dates, birthdays, anniversaries, appointments (e.g., "Mom's birthday is March 15")
+- relationship: Information about people - who they are, context, how you know them (e.g., "John Smith is my manager at Acme Corp")
+- goal: Things you're working toward, aspirations, objectives (e.g., "I want to learn Rust this year")
+
+## Your Task
+Analyze the input and:
+1. Categorize it into one of the 5 types above
+2. Create a brief summary (1-2 sentences) that captures the key information
+3. Generate 2-5 relevant tags
+
+Return ONLY valid JSON in this exact format:
+{
+  "type": "fact" | "preference" | "event" | "relationship" | "goal",
+  "summary": "brief summary of the information",
+  "tags": ["tag1", "tag2"]
+}
+
+## Rules
+- Choose the most appropriate category based on the nature of the information
+- Keep summary concise but include all key details
+- Tags should be lowercase, use underscores for multi-word
+- Return ONLY the JSON object, no markdown formatting, no extra text`;
+
 export class LLMService {
   private client: ReturnType<typeof createOpenAI>;
 
@@ -143,6 +171,51 @@ export class LLMService {
       }
       if (error instanceof Error) {
         throw new Error(`Failed to extract knowledge: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  async categorizeFact(fact: string): Promise<CategorizationResult> {
+    try {
+      const { text } = await generateText({
+        model: this.client(config.llm.model),
+        system: CATEGORIZATION_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: `Categorize this fact/note:\n\n${fact}`,
+          },
+        ],
+        maxTokens: 512,
+      });
+
+      const jsonText = text.trim();
+      const result = JSON.parse(jsonText) as CategorizationResult;
+
+      // Validate the result
+      const validTypes = ['fact', 'preference', 'event', 'relationship', 'goal'];
+      if (!result.type || !validTypes.includes(result.type)) {
+        throw new Error('Invalid categorization: invalid or missing type');
+      }
+      if (!result.summary) {
+        throw new Error('Invalid categorization: missing summary');
+      }
+
+      // Ensure tags is an array
+      if (!result.tags) {
+        result.tags = [];
+      }
+
+      return result;
+    } catch (error) {
+      console.error('LLM API error during categorization:', error);
+      if (error instanceof SyntaxError) {
+        console.error('Failed to parse categorization JSON');
+        throw new Error('Failed to parse categorization result');
+      }
+      if (error instanceof Error) {
+        throw new Error(`Failed to categorize fact: ${error.message}`);
       }
       throw error;
     }

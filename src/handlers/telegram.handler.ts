@@ -1,7 +1,8 @@
-import { Context, Telegraf } from 'telegraf';
+import { Context, Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 
 import { config } from '../config';
+import { RememberEntryType, CategorizationResult } from '../models';
 import {
   ConversationStateService,
   LLMService,
@@ -13,6 +14,14 @@ import {
   KnowledgeRepository,
 } from '../repositories';
 
+// Pending remember confirmations - maps uniqueId to pending data
+interface PendingRemember {
+  userId: string;
+  fact: string;
+  categorization: CategorizationResult;
+  createdAt: Date;
+}
+
 export class TelegramHandler {
   private bot: Telegraf;
   private conversationState: ConversationStateService;
@@ -20,6 +29,7 @@ export class TelegramHandler {
   private openai: OpenAIService;
   private conversationRepo: ConversationRepository;
   private knowledgeRepo: KnowledgeRepository;
+  private pendingRemember: Map<string, PendingRemember> = new Map();
 
   constructor() {
     this.bot = new Telegraf(config.telegram.botToken);
@@ -85,6 +95,33 @@ export class TelegramHandler {
     // Discard command - delete a specific previous conversation
     this.bot.command('discard', async (ctx) => {
       await this.handleDiscard(ctx);
+    });
+
+    // Recall command - semantic search of knowledge base
+    this.bot.command('recall', async (ctx) => {
+      await this.handleRecall(ctx);
+    });
+
+    // Remember command - quick fact storage with categorization
+    this.bot.command('remember', async (ctx) => {
+      await this.handleRemember(ctx);
+    });
+
+    // Callback query handlers for inline buttons
+    this.bot.action(/^remember_confirm:(.+)$/, async (ctx) => {
+      await this.handleRememberConfirm(ctx);
+    });
+
+    this.bot.action(/^remember_change:(.+)$/, async (ctx) => {
+      await this.handleRememberChange(ctx);
+    });
+
+    this.bot.action(/^remember_type:(.+):(.+)$/, async (ctx) => {
+      await this.handleRememberTypeSelect(ctx);
+    });
+
+    this.bot.action(/^remember_cancel:(.+)$/, async (ctx) => {
+      await this.handleRememberCancel(ctx);
     });
 
     // Handle all text messages
@@ -363,6 +400,400 @@ export class TelegramHandler {
     }
   }
 
+  private async handleRecall(ctx: Context): Promise<void> {
+    const userId = ctx.from?.id.toString();
+    if (!userId) {
+      await ctx.reply('Unable to identify user.');
+      return;
+    }
+
+    // Extract topic from command
+    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const topic = text.replace(/^\/recall\s*/i, '').trim();
+
+    if (!topic) {
+      await ctx.reply(
+        '🔍 *Recall Knowledge*\n\n' +
+        'Search your knowledge base by topic.\n\n' +
+        'Usage: `/recall [topic]`\n\n' +
+        'Examples:\n' +
+        '• `/recall kubernetes memory issues`\n' +
+        '• `/recall debugging JVM`\n' +
+        '• `/recall TypeScript best practices`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    await ctx.reply(`🔍 Searching for "${topic}"...`);
+
+    try {
+      // Generate embedding for the search query
+      const embedding = await this.openai.generateEmbedding(topic);
+
+      // Search knowledge base with user filter
+      const results = await this.knowledgeRepo.search(
+        embedding,
+        0.5,  // Lower threshold to catch more results
+        5,    // Limit to 5 results
+        userId
+      );
+
+      if (results.length === 0) {
+        await ctx.reply(
+          `No matching knowledge found for "${topic}".\n\n` +
+          'Try:\n' +
+          '• Using different keywords\n' +
+          '• Being more specific or general\n' +
+          '• Having a conversation and using /extract to save knowledge first'
+        );
+        return;
+      }
+
+      // Format results
+      let response = `🧠 *Found ${results.length} result${results.length > 1 ? 's' : ''}*\n\n`;
+
+      results.forEach((result, index) => {
+        const similarity = Math.round(result.similarity * 100);
+        const date = result.createdAt.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+
+        response += `*${index + 1}. ${this.formatEntryType(result.type)}* (${similarity}% match)\n`;
+        response += `📅 ${date}\n`;
+        
+        // Problem/topic
+        if (result.problem) {
+          const problem = result.problem.length > 150 
+            ? result.problem.substring(0, 150) + '...' 
+            : result.problem;
+          response += `📌 ${problem}\n`;
+        }
+
+        // Solution/answer
+        if (result.solution) {
+          const solution = result.solution.length > 200 
+            ? result.solution.substring(0, 200) + '...' 
+            : result.solution;
+          response += `💡 ${solution}\n`;
+        }
+
+        // Key learnings (show first 2)
+        if (result.learnings && result.learnings.length > 0) {
+          const learningsToShow = result.learnings.slice(0, 2);
+          response += `📝 Learnings:\n`;
+          learningsToShow.forEach((learning) => {
+            const truncated = learning.length > 100 
+              ? learning.substring(0, 100) + '...' 
+              : learning;
+            response += `  • ${truncated}\n`;
+          });
+          if (result.learnings.length > 2) {
+            response += `  • _(+${result.learnings.length - 2} more)_\n`;
+          }
+        }
+
+        // Tags
+        if (result.tags && result.tags.length > 0) {
+          response += `🏷 ${result.tags.join(', ')}\n`;
+        }
+
+        response += '\n';
+      });
+
+      await ctx.reply(response, { parse_mode: 'Markdown' });
+    } catch (error) {
+      console.error('Failed to recall knowledge:', error);
+      await ctx.reply('Sorry, I could not search your knowledge base. Please try again.');
+    }
+  }
+
+  private formatEntryType(type: string): string {
+    const typeLabels: Record<string, string> = {
+      problem_solution: 'Problem & Solution',
+      insight: 'Insight',
+      decision: 'Decision',
+      learning: 'Learning',
+      fact: 'Fact',
+      preference: 'Preference',
+      event: 'Event',
+      relationship: 'Relationship',
+      goal: 'Goal',
+      article_summary: 'Article Summary',
+      research: 'Research',
+    };
+    return typeLabels[type] || type;
+  }
+
+  private async handleRemember(ctx: Context): Promise<void> {
+    const userId = ctx.from?.id.toString();
+    if (!userId) {
+      await ctx.reply('Unable to identify user.');
+      return;
+    }
+
+    // Extract fact from command
+    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const fact = text.replace(/^\/remember\s*/i, '').trim();
+
+    if (!fact) {
+      await ctx.reply(
+        '📝 *Remember Something*\n\n' +
+        'Quickly save a fact, preference, event, relationship, or goal.\n\n' +
+        'Usage: `/remember [what to remember]`\n\n' +
+        'Examples:\n' +
+        '• `/remember Python 3.12 was released in October 2023`\n' +
+        '• `/remember I prefer Delta airlines for domestic flights`\n' +
+        '• `/remember Mom\'s birthday is March 15`\n' +
+        '• `/remember John Smith is my manager at Acme Corp`\n' +
+        '• `/remember I want to learn Rust this year`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    await ctx.reply('Analyzing what you want to remember...');
+
+    try {
+      // Categorize the fact using LLM
+      const categorization = await this.llm.categorizeFact(fact);
+
+      // Generate unique ID for this pending remember
+      const uniqueId = `${userId}_${Date.now()}`;
+
+      // Store pending data
+      this.pendingRemember.set(uniqueId, {
+        userId,
+        fact,
+        categorization,
+        createdAt: new Date(),
+      });
+
+      // Create inline keyboard with confirm/change options
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback(`✅ ${this.formatEntryType(categorization.type)}`, `remember_confirm:${uniqueId}`),
+          Markup.button.callback('🔄 Change', `remember_change:${uniqueId}`),
+        ],
+        [
+          Markup.button.callback('❌ Cancel', `remember_cancel:${uniqueId}`),
+        ],
+      ]);
+
+      await ctx.reply(
+        `📝 *I'll remember this as:*\n\n` +
+        `*Type:* ${this.formatEntryType(categorization.type)}\n` +
+        `*Summary:* ${categorization.summary}\n` +
+        `*Tags:* ${categorization.tags.join(', ')}\n\n` +
+        `Is this correct?`,
+        { parse_mode: 'Markdown', ...keyboard }
+      );
+    } catch (error) {
+      console.error('Failed to categorize fact:', error);
+      await ctx.reply('Sorry, I could not process that. Please try again.');
+    }
+  }
+
+  private async handleRememberConfirm(ctx: Context): Promise<void> {
+    const match = (ctx.callbackQuery as any)?.data?.match(/^remember_confirm:(.+)$/);
+    if (!match) {
+      await ctx.answerCbQuery('Invalid action');
+      return;
+    }
+
+    const uniqueId = match[1];
+    const pending = this.pendingRemember.get(uniqueId);
+
+    if (!pending) {
+      await ctx.answerCbQuery('This action has expired. Please try again.');
+      await ctx.editMessageText('This action has expired. Use /remember to try again.');
+      return;
+    }
+
+    // Verify user
+    const userId = ctx.from?.id.toString();
+    if (userId !== pending.userId) {
+      await ctx.answerCbQuery('You cannot confirm someone else\'s action.');
+      return;
+    }
+
+    await ctx.answerCbQuery('Saving...');
+
+    try {
+      // Generate embedding
+      const embeddingText = `${pending.categorization.summary} ${pending.categorization.tags.join(' ')}`;
+      const embedding = await this.openai.generateEmbedding(embeddingText);
+
+      // Save to knowledge base
+      await this.knowledgeRepo.save({
+        userId: pending.userId,
+        type: pending.categorization.type as RememberEntryType,
+        problem: pending.categorization.summary,
+        solution: pending.fact, // Store original fact as solution
+        context: null,
+        learnings: [],
+        tags: pending.categorization.tags,
+        embedding,
+      });
+
+      // Clean up pending
+      this.pendingRemember.delete(uniqueId);
+
+      await ctx.editMessageText(
+        `✅ *Saved!*\n\n` +
+        `*Type:* ${this.formatEntryType(pending.categorization.type)}\n` +
+        `*Summary:* ${pending.categorization.summary}\n` +
+        `*Tags:* ${pending.categorization.tags.join(', ')}\n\n` +
+        `Use /recall to search your knowledge later.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      console.error('Failed to save remembered fact:', error);
+      await ctx.editMessageText('Failed to save. Please try /remember again.');
+      this.pendingRemember.delete(uniqueId);
+    }
+  }
+
+  private async handleRememberChange(ctx: Context): Promise<void> {
+    const match = (ctx.callbackQuery as any)?.data?.match(/^remember_change:(.+)$/);
+    if (!match) {
+      await ctx.answerCbQuery('Invalid action');
+      return;
+    }
+
+    const uniqueId = match[1];
+    const pending = this.pendingRemember.get(uniqueId);
+
+    if (!pending) {
+      await ctx.answerCbQuery('This action has expired. Please try again.');
+      await ctx.editMessageText('This action has expired. Use /remember to try again.');
+      return;
+    }
+
+    // Verify user
+    const userId = ctx.from?.id.toString();
+    if (userId !== pending.userId) {
+      await ctx.answerCbQuery('You cannot modify someone else\'s action.');
+      return;
+    }
+
+    await ctx.answerCbQuery();
+
+    // Show category picker
+    const categories: RememberEntryType[] = ['fact', 'preference', 'event', 'relationship', 'goal'];
+    const keyboard = Markup.inlineKeyboard([
+      categories.slice(0, 3).map(type => 
+        Markup.button.callback(this.formatEntryType(type), `remember_type:${uniqueId}:${type}`)
+      ),
+      categories.slice(3).map(type => 
+        Markup.button.callback(this.formatEntryType(type), `remember_type:${uniqueId}:${type}`)
+      ),
+      [Markup.button.callback('❌ Cancel', `remember_cancel:${uniqueId}`)],
+    ]);
+
+    await ctx.editMessageText(
+      `📝 *Select the correct category:*\n\n` +
+      `*Original:* ${pending.fact}`,
+      { parse_mode: 'Markdown', ...keyboard }
+    );
+  }
+
+  private async handleRememberTypeSelect(ctx: Context): Promise<void> {
+    const match = (ctx.callbackQuery as any)?.data?.match(/^remember_type:(.+):(.+)$/);
+    if (!match) {
+      await ctx.answerCbQuery('Invalid action');
+      return;
+    }
+
+    const uniqueId = match[1];
+    const newType = match[2] as RememberEntryType;
+    const pending = this.pendingRemember.get(uniqueId);
+
+    if (!pending) {
+      await ctx.answerCbQuery('This action has expired. Please try again.');
+      await ctx.editMessageText('This action has expired. Use /remember to try again.');
+      return;
+    }
+
+    // Verify user
+    const userId = ctx.from?.id.toString();
+    if (userId !== pending.userId) {
+      await ctx.answerCbQuery('You cannot modify someone else\'s action.');
+      return;
+    }
+
+    // Update the type
+    pending.categorization.type = newType;
+    this.pendingRemember.set(uniqueId, pending);
+
+    await ctx.answerCbQuery('Saving...');
+
+    try {
+      // Generate embedding
+      const embeddingText = `${pending.categorization.summary} ${pending.categorization.tags.join(' ')}`;
+      const embedding = await this.openai.generateEmbedding(embeddingText);
+
+      // Save to knowledge base
+      await this.knowledgeRepo.save({
+        userId: pending.userId,
+        type: newType,
+        problem: pending.categorization.summary,
+        solution: pending.fact,
+        context: null,
+        learnings: [],
+        tags: pending.categorization.tags,
+        embedding,
+      });
+
+      // Clean up pending
+      this.pendingRemember.delete(uniqueId);
+
+      await ctx.editMessageText(
+        `✅ *Saved!*\n\n` +
+        `*Type:* ${this.formatEntryType(newType)}\n` +
+        `*Summary:* ${pending.categorization.summary}\n` +
+        `*Tags:* ${pending.categorization.tags.join(', ')}\n\n` +
+        `Use /recall to search your knowledge later.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      console.error('Failed to save remembered fact:', error);
+      await ctx.editMessageText('Failed to save. Please try /remember again.');
+      this.pendingRemember.delete(uniqueId);
+    }
+  }
+
+  private async handleRememberCancel(ctx: Context): Promise<void> {
+    const match = (ctx.callbackQuery as any)?.data?.match(/^remember_cancel:(.+)$/);
+    if (!match) {
+      await ctx.answerCbQuery('Invalid action');
+      return;
+    }
+
+    const uniqueId = match[1];
+    const pending = this.pendingRemember.get(uniqueId);
+
+    if (!pending) {
+      await ctx.answerCbQuery('Already cancelled.');
+      return;
+    }
+
+    // Verify user
+    const userId = ctx.from?.id.toString();
+    if (userId !== pending.userId) {
+      await ctx.answerCbQuery('You cannot cancel someone else\'s action.');
+      return;
+    }
+
+    // Clean up pending
+    this.pendingRemember.delete(uniqueId);
+
+    await ctx.answerCbQuery('Cancelled');
+    await ctx.editMessageText('Cancelled. Use /remember to try again.');
+  }
+
   private async handleMessage(ctx: Context): Promise<void> {
     const userId = ctx.from?.id.toString();
     const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
@@ -458,6 +889,7 @@ export class TelegramHandler {
       // Step 3: Save knowledge entry
       knowledgeEntry = await this.knowledgeRepo.save({
         conversationId,
+        userId,
         type: extracted.type,
         problem: extracted.problem,
         context: extracted.context,
