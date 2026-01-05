@@ -486,21 +486,21 @@ export class TelegramHandler {
         response += `*${index + 1}. ${this.formatThoughtKind(result.kind)}* (${similarity}%${textMatch})\n`;
         response += `📅 ${date} • ${result.domain}\n`;
 
-        // Claim (the main content)
-        const claim = result.claim.length > 200
+        // Claim (the main content) - escape markdown special chars
+        const claimText = result.claim.length > 200
           ? result.claim.substring(0, 200) + '...'
           : result.claim;
-        response += `💡 ${claim}\n`;
+        response += `💡 ${this.escapeMarkdown(claimText)}\n`;
 
-        // Context if available
+        // Context if available - escape markdown special chars
         if (result.context) {
-          const context = result.context.length > 100
+          const contextText = result.context.length > 100
             ? result.context.substring(0, 100) + '...'
             : result.context;
-          response += `📌 ${context}\n`;
+          response += `📌 ${this.escapeMarkdown(contextText)}\n`;
         }
 
-        // Actionables (show first 2)
+        // Actionables (show first 2) - escape markdown special chars
         if (result.actionables && result.actionables.length > 0) {
           const actionablesToShow = result.actionables.slice(0, 2);
           response += `📝 Actions:\n`;
@@ -508,16 +508,16 @@ export class TelegramHandler {
             const truncated = action.length > 80
               ? action.substring(0, 80) + '...'
               : action;
-            response += `  • ${truncated}\n`;
+            response += `  • ${this.escapeMarkdown(truncated)}\n`;
           });
           if (result.actionables.length > 2) {
             response += `  • _(+${result.actionables.length - 2} more)_\n`;
           }
         }
 
-        // Tags
+        // Tags - escape markdown special chars
         if (result.tags && result.tags.length > 0) {
-          response += `🏷 ${result.tags.join(', ')}\n`;
+          response += `🏷 ${this.escapeMarkdown(result.tags.join(', '))}\n`;
         }
 
         response += '\n';
