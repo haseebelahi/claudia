@@ -527,6 +527,13 @@ export class TelegramHandler {
     return kindLabels[kind] || kind;
   }
 
+  /**
+   * Escape special characters for Telegram Markdown
+   */
+  private escapeMarkdown(text: string): string {
+    return text.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+  }
+
   private async handleRemember(ctx: Context): Promise<void> {
     const userId = ctx.from?.id.toString();
     if (!userId) {
@@ -586,8 +593,8 @@ export class TelegramHandler {
         `📝 *I'll remember this as:*\n\n` +
         `*Kind:* ${this.formatThoughtKind(thought.kind)}\n` +
         `*Domain:* ${thought.domain}\n` +
-        `*Claim:* ${thought.claim}\n` +
-        `*Tags:* ${thought.tags.join(', ')}\n\n` +
+        `*Claim:* ${this.escapeMarkdown(thought.claim)}\n` +
+        `*Tags:* ${thought.tags.map(t => this.escapeMarkdown(t)).join(', ')}\n\n` +
         `Is this correct?`,
         { parse_mode: 'Markdown', ...keyboard }
       );
@@ -646,8 +653,8 @@ export class TelegramHandler {
       await ctx.editMessageText(
         `✅ *Saved!*\n\n` +
         `*Kind:* ${this.formatThoughtKind(pending.thought.kind)}\n` +
-        `*Claim:* ${pending.thought.claim}\n` +
-        `*Tags:* ${pending.thought.tags.join(', ')}\n\n` +
+        `*Claim:* ${this.escapeMarkdown(pending.thought.claim)}\n` +
+        `*Tags:* ${pending.thought.tags.map(t => this.escapeMarkdown(t)).join(', ')}\n\n` +
         `Use /recall to search your thoughts later.`,
         { parse_mode: 'Markdown' }
       );
@@ -697,7 +704,7 @@ export class TelegramHandler {
 
     await ctx.editMessageText(
       `📝 *Select the correct kind:*\n\n` +
-      `*Original:* ${pending.fact}`,
+      `*Original:* ${this.escapeMarkdown(pending.fact)}`,
       { parse_mode: 'Markdown', ...keyboard }
     );
   }
@@ -756,8 +763,8 @@ export class TelegramHandler {
       await ctx.editMessageText(
         `✅ *Saved!*\n\n` +
         `*Kind:* ${this.formatThoughtKind(newKind)}\n` +
-        `*Claim:* ${pending.thought.claim}\n` +
-        `*Tags:* ${pending.thought.tags.join(', ')}\n\n` +
+        `*Claim:* ${this.escapeMarkdown(pending.thought.claim)}\n` +
+        `*Tags:* ${pending.thought.tags.map(t => this.escapeMarkdown(t)).join(', ')}\n\n` +
         `Use /recall to search your thoughts later.`,
         { parse_mode: 'Markdown' }
       );
