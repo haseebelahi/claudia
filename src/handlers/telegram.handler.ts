@@ -11,7 +11,6 @@ import {
   vaultService,
 } from '../services';
 import {
-  ConversationRepository,
   ThoughtRepository,
   SourceRepository,
 } from '../repositories';
@@ -29,7 +28,6 @@ export class TelegramHandler {
   private conversationState: ConversationStateService;
   private llm: LLMService;
   private openai: OpenAIService;
-  private conversationRepo: ConversationRepository;
   private thoughtRepo: ThoughtRepository;
   private sourceRepo: SourceRepository;
   private pendingRemember: Map<string, PendingRemember> = new Map();
@@ -41,7 +39,6 @@ export class TelegramHandler {
     this.openai = new OpenAIService();
 
     const supabase = new SupabaseService();
-    this.conversationRepo = new ConversationRepository(supabase);
     this.thoughtRepo = new ThoughtRepository(supabase);
     this.sourceRepo = new SourceRepository(supabase);
 
@@ -53,16 +50,9 @@ export class TelegramHandler {
   }
 
   private async loadUserConversation(userId: string): Promise<void> {
-    try {
-      const conversation = await this.conversationRepo.findActiveByUserId(userId);
-      
-      if (conversation) {
-        console.log(`Loading active conversation for user ${userId}: ${conversation.id}`);
-        this.conversationState.loadConversationFromDB(conversation);
-      }
-    } catch (error) {
-      console.error(`Failed to load conversation for user ${userId}:`, error);
-    }
+    // No-op: Conversations are memory-only in Phase 2.5+
+    // Previously this loaded active conversations from DB, but that table is now deleted
+    console.log(`User ${userId} conversation will be created on first message (memory-only)`);
   }
 
   private setupHandlers(): void {
@@ -178,10 +168,7 @@ export class TelegramHandler {
     await ctx.reply('Extracting knowledge from our conversation...');
 
     try {
-      // Save conversation before extraction to ensure it's persisted
-      await this.saveConversation(userId);
-      this.conversationState.markConversationSaved(userId);
-      
+      // Conversations are memory-only - no need to save before extraction
       await this.extractAndSave(userId);
       await ctx.reply('✅ Knowledge extracted and saved!');
     } catch (error) {
@@ -225,16 +212,7 @@ export class TelegramHandler {
 
     this.conversationState.clearConversation(userId);
     
-    const conversationId = this.conversationState.getConversationId(userId);
-    if (conversationId) {
-      try {
-        await this.conversationRepo.update(conversationId, {
-          status: 'archived',
-        });
-      } catch (error) {
-        console.error('Failed to archive conversation:', error);
-      }
-    }
+    // No need to archive - conversations are memory-only
 
     await ctx.reply('✅ Conversation cleared. Start a new one anytime!');
   }
@@ -286,48 +264,9 @@ export class TelegramHandler {
     }
 
     try {
-      const conversations = await this.conversationRepo.findNonExtractedByUserId(userId);
-      
-      if (conversations.length === 0) {
-        await ctx.reply('No previous conversations found.\n\nAll your conversations have been extracted or cleared.');
-        return;
-      }
-
-      let response = `📚 *Previous Conversations* (${conversations.length})\n\n`;
-      response += `These conversations have not been extracted yet:\n\n`;
-
-      conversations.forEach((conv, index) => {
-        const date = conv.updatedAt.toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-        
-        // Count messages in transcript
-        const messageCount = conv.rawTranscript.split('\n\n').filter(line => 
-          line.startsWith('user:') || line.startsWith('assistant:')
-        ).length;
-
-        response += `${index + 1}. *${conv.status.toUpperCase()}* - ${messageCount} messages\n`;
-        response += `   📅 Last updated: ${date}\n`;
-        response += `   🆔 ID: \`${conv.id}\`\n`;
-        
-        // Show preview of first message
-        const firstMessage = conv.rawTranscript.split('\n\n')[0];
-        if (firstMessage) {
-          const preview = firstMessage.replace(/^(user|assistant): /, '');
-          const truncated = preview.length > 80 ? preview.substring(0, 80) + '...' : preview;
-          response += `   💬 "${truncated}"\n`;
-        }
-        response += `\n`;
-      });
-
-      response += `\n💡 To discard a conversation, use:\n`;
-      response += `/discard \`conversation_id\``;
-
-      await ctx.reply(response, { parse_mode: 'Markdown' });
+      // Return empty list - conversations are memory-only now
+      await ctx.reply('No previous conversations found.\n\nAll conversations are now memory-only until extraction. Use /extract to save your current conversation.');
+      return;
     } catch (error) {
       console.error('Failed to fetch conversation history:', error);
       await ctx.reply('Sorry, I could not retrieve your conversation history. Please try again.');
@@ -341,67 +280,14 @@ export class TelegramHandler {
       return;
     }
 
-    // Extract conversation ID from command
-    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const parts = text.split(' ');
-    
-    if (parts.length < 2) {
-      await ctx.reply(
-        '❌ Please provide a conversation ID.\n\n' +
-        'Usage: `/discard` `conversation_id`\n\n' +
-        'Use /history to see your previous conversations.',
-        { parse_mode: 'Markdown' }
-      );
-      return;
-    }
-
-    const conversationId = parts[1].trim();
-
-    try {
-      // Verify the conversation belongs to the user
-      const conversation = await this.conversationRepo.findById(conversationId);
-      
-      if (!conversation) {
-        await ctx.reply('❌ Conversation not found.');
-        return;
-      }
-
-      if (conversation.userId !== userId) {
-        await ctx.reply('❌ You can only discard your own conversations.');
-        return;
-      }
-
-      if (conversation.status === 'extracted') {
-        await ctx.reply(
-          '❌ This conversation has already been extracted.\n\n' +
-          'Extracted conversations cannot be discarded as they\'ve been saved as knowledge.'
-        );
-        return;
-      }
-
-      // Check if it's the active conversation
-      const activeConvId = this.conversationState.getConversationId(userId);
-      if (activeConvId === conversationId) {
-        await ctx.reply(
-          '❌ This is your current active conversation.\n\n' +
-          'Use /clear instead to discard your current conversation.'
-        );
-        return;
-      }
-
-      // Delete the conversation
-      await this.conversationRepo.delete(conversationId);
-
-      await ctx.reply(
-        '✅ Conversation discarded successfully.\n\n' +
-        `ID: \`${conversationId}\`\n\n` +
-        'Use /history to see your remaining conversations.',
-        { parse_mode: 'Markdown' }
-      );
-    } catch (error) {
-      console.error('Failed to discard conversation:', error);
-      await ctx.reply('Sorry, I could not discard that conversation. Please try again.');
-    }
+    // Discard command is obsolete - conversations are memory-only
+    await ctx.reply(
+      '❌ This command is no longer available.\n\n' +
+      'Conversations are now memory-only until extraction. Use:\n' +
+      '• /clear - to discard your current conversation\n' +
+      '• /extract - to save your conversation as knowledge',
+      { parse_mode: 'Markdown' }
+    );
   }
 
   private async handleRecall(ctx: Context): Promise<void> {
@@ -901,41 +787,14 @@ export class TelegramHandler {
       // Send response to user
       await ctx.reply(response);
 
-      // Only save if threshold reached
-      if (this.conversationState.shouldSaveConversation(userId)) {
-        await this.saveConversation(userId);
-        this.conversationState.markConversationSaved(userId);
-        console.log(`Conversation saved for user ${userId} (threshold reached)`);
-      }
+      // No auto-save - conversations are memory-only until extraction
     } catch (error) {
       console.error('Error handling message:', error);
       await ctx.reply('Sorry, I encountered an error. Please try again.');
     }
   }
 
-  private async saveConversation(userId: string): Promise<void> {
-    const conversationId = this.conversationState.getConversationId(userId);
-    const messages = this.conversationState.getMessages(userId);
-
-    if (!conversationId) {
-      return;
-    }
-
-    const transcript = messages
-      .map((msg) => `${msg.role}: ${msg.content}`)
-      .join('\n\n');
-
-    try {
-      await this.conversationRepo.save({
-        id: conversationId,
-        userId: userId,
-        rawTranscript: transcript,
-        status: 'active',
-      });
-    } catch (error) {
-      console.error('Failed to save conversation:', error);
-    }
-  }
+  // saveConversation method removed - conversations are memory-only in Phase 2.5+
 
   private async extractAndSave(userId: string): Promise<void> {
     const conversationId = this.conversationState.getConversationId(userId);
@@ -990,18 +849,14 @@ export class TelegramHandler {
         console.log(`Thought saved: ${savedThought.id} (${thought.kind})`);
       }
 
-      // Step 4: Update conversation status
-      await this.conversationRepo.update(conversationId, {
-        status: 'extracted',
-      });
-      console.log(`Conversation ${conversationId} marked as extracted`);
+      // No need to mark conversation as extracted - conversations are memory-only
 
-      // Step 5: Write to vault (non-blocking)
+      // Step 4: Write to vault (non-blocking)
       this.writeToVault(source, savedThoughts).catch(err => {
         console.error('Vault write failed (non-blocking):', err);
       });
 
-      // Step 6: End conversation
+      // Step 5: End conversation
       this.conversationState.endConversation(userId);
       console.log(`Conversation ended for user ${userId}`);
 

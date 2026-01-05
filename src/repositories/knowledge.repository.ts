@@ -1,34 +1,35 @@
+// DEPRECATED: This repository is obsolete after Phase 2.5 migration
+// Use ThoughtRepository instead for the new Thought Model v1
+// Keep this file for backwards compatibility but all methods throw errors
+
 import { KnowledgeEntry, KnowledgeEntryInsert, KnowledgeSearchResult } from '../models';
 import { SupabaseService } from '../services';
 
 export class KnowledgeRepository {
-  constructor(private supabase: SupabaseService) {}
+  constructor(_supabase: SupabaseService) {}
 
-  async save(entry: KnowledgeEntryInsert): Promise<KnowledgeEntry> {
-    return this.supabase.createKnowledgeEntry(entry);
+  async save(_entry: KnowledgeEntryInsert): Promise<KnowledgeEntry> {
+    throw new Error('KnowledgeRepository.save: Legacy method removed. Use ThoughtRepository instead.');
   }
 
   async findById(_id: string): Promise<KnowledgeEntry | null> {
-    // Implement if needed for Phase 2
-    throw new Error('Not implemented yet');
+    throw new Error('KnowledgeRepository.findById: Legacy method removed. Use ThoughtRepository instead.');
   }
 
   async search(
-    embedding: number[],
-    threshold: number = 0.7,
-    limit: number = 10,
-    userId?: string
+    _embedding: number[],
+    _threshold: number = 0.7,
+    _limit: number = 10,
+    _userId?: string
   ): Promise<KnowledgeSearchResult[]> {
-    return this.supabase.searchKnowledge(embedding, threshold, limit, userId);
+    throw new Error('KnowledgeRepository.search: Legacy method removed. Use ThoughtRepository instead.');
   }
 
   async findByConversationId(_conversationId: string): Promise<KnowledgeEntry[]> {
-    // Implement if needed
-    throw new Error('Not implemented yet');
+    throw new Error('KnowledgeRepository.findByConversationId: Legacy method removed.');
   }
 
   async findByTags(_tags: string[]): Promise<KnowledgeEntry[]> {
-    // Implement for Phase 2+
-    throw new Error('Not implemented yet');
+    throw new Error('KnowledgeRepository.findByTags: Legacy method removed. Use ThoughtRepository instead.');
   }
 }

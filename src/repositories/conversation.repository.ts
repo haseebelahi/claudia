@@ -1,42 +1,42 @@
+// DEPRECATED: This repository is obsolete after Phase 2.5 migration
+// Conversations are now memory-only until extraction (stored as sources + thoughts)
+// Keep this file for backwards compatibility but all methods are no-ops
+
 import { Conversation, ConversationInsert, ConversationUpdate } from '../models';
 import { SupabaseService } from '../services';
 
 export class ConversationRepository {
-  constructor(private supabase: SupabaseService) {}
+  constructor(_supabase: SupabaseService) {}
 
-  async create(data: ConversationInsert): Promise<Conversation> {
-    return this.supabase.createConversation(data);
+  async create(_data: ConversationInsert): Promise<Conversation> {
+    throw new Error('ConversationRepository.create: Legacy method removed. Conversations are memory-only.');
   }
 
-  async update(id: string, data: ConversationUpdate): Promise<Conversation> {
-    return this.supabase.updateConversation(id, data);
+  async update(_id: string, _data: ConversationUpdate): Promise<Conversation> {
+    throw new Error('ConversationRepository.update: Legacy method removed. Conversations are memory-only.');
   }
 
-  async findById(id: string): Promise<Conversation | null> {
-    return this.supabase.getConversation(id);
+  async findById(_id: string): Promise<Conversation | null> {
+    // Return null - no persisted conversations
+    return null;
   }
 
-  async findActiveByUserId(userId: string): Promise<Conversation | null> {
-    return this.supabase.getActiveConversationForUser(userId);
+  async findActiveByUserId(_userId: string): Promise<Conversation | null> {
+    // Return null - conversations are memory-only
+    return null;
   }
 
-  async save(conversation: Partial<Conversation>): Promise<Conversation> {
-    if (conversation.id) {
-      // Check if exists
-      const existing = await this.findById(conversation.id);
-      if (existing) {
-        return this.update(conversation.id, conversation);
-      }
-    }
-    
-    return this.create(conversation as ConversationInsert);
+  async save(_conversation: Partial<Conversation>): Promise<Conversation> {
+    throw new Error('ConversationRepository.save: Legacy method removed. Conversations are memory-only.');
   }
 
-  async findNonExtractedByUserId(userId: string): Promise<Conversation[]> {
-    return this.supabase.getNonExtractedConversationsForUser(userId);
+  async findNonExtractedByUserId(_userId: string): Promise<Conversation[]> {
+    // Return empty array - no persisted conversations
+    return [];
   }
 
-  async delete(id: string): Promise<void> {
-    return this.supabase.deleteConversation(id);
+  async delete(_id: string): Promise<void> {
+    // No-op - conversations are memory-only
+    return;
   }
 }

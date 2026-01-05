@@ -1,8 +1,10 @@
 import { config } from '../config';
 import { Conversation, ConversationState, Message } from '../models';
 
-const SAVE_INTERVAL_MS = 300000; // 5 minutes
-const SAVE_MESSAGE_THRESHOLD = 10; // 10 messages
+// NOTE: Conversations are memory-only in Phase 2.5+
+// They exist only until extraction, then become sources + thoughts
+const SAVE_INTERVAL_MS = 300000; // 5 minutes (obsolete - kept for compatibility)
+const SAVE_MESSAGE_THRESHOLD = 10; // 10 messages (obsolete - kept for compatibility)
 
 export class ConversationStateService {
   private conversations: Map<string, ConversationState> = new Map();
@@ -10,6 +12,7 @@ export class ConversationStateService {
 
   constructor() {}
 
+  // DEPRECATED: This method is no longer used (conversations are memory-only)
   loadConversationFromDB(conversation: Conversation): void {
     const messages = this.parseTranscript(conversation.rawTranscript);
 
@@ -89,6 +92,7 @@ export class ConversationStateService {
     }
   }
 
+  // DEPRECATED: Auto-save logic removed - conversations are memory-only until extraction
   shouldSaveConversation(userId: string): boolean {
     const state = this.conversations.get(userId);
     if (!state) return false;
@@ -112,6 +116,7 @@ export class ConversationStateService {
     return false;
   }
 
+  // DEPRECATED: No-op - conversations are not saved to DB anymore
   markConversationSaved(userId: string): void {
     const state = this.conversations.get(userId);
     if (state) {
