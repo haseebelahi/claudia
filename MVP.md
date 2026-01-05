@@ -470,11 +470,33 @@ From research on PKM + AI architectures:
 
 | Practice | Industry Standard | Our Current Approach |
 |----------|------------------|----------------------|
-| Search | Hybrid: BM25 + vector + reranking | ✅ Hybrid: Full-text + vector + RRF |
+| Search | Hybrid: BM25 + vector + reranking | ✅ Hybrid: Postgres FTS + vector + RRF (see note below) |
 | Storage | Human-readable files (markdown) | Structured Postgres tables |
 | Portability | Git-versioned, exportable | Locked in Supabase |
 | Complexity | Simpler = better | Custom bot + DB + hosting |
 | Privacy | Local-first preferred | Cloud-first |
+
+**Note on Search Implementation (Postgres FTS vs BM25):**
+
+We use PostgreSQL full-text search (tsvector/tsquery) rather than true BM25. Key differences:
+
+| Aspect | Our Implementation (Postgres FTS) | BM25 (Elasticsearch/Lucene) |
+|--------|-----------------------------------|----------------------------|
+| Algorithm | ts_rank_cd (cover density) | Probabilistic TF-IDF |
+| Term frequency | Basic TF with position awareness | TF with saturation (diminishing returns) |
+| Doc length normalization | Optional (flag 32) | Built-in via `b` parameter |
+| IDF | Basic via tsvector weights | Full IDF calculation |
+| Tuning | Weight classes (A/B/C/D) | k1 (saturation), b (length norm) |
+
+**Why this is acceptable for our use case:**
+- Personal knowledge base with <1000 thoughts (BM25 shines at scale)
+- Main value is keyword matching + RRF fusion with vectors
+- Postgres FTS is built-in, no additional infrastructure
+
+**Future improvements if needed:**
+- Add pg_trgm for fuzzy/partial matching (e.g., "k8s" → "kubernetes")
+- Use ParadeDB (Postgres extension with real BM25)
+- Add LLM reranking on top-N results
 
 **Sources:**
 - [Decoding ML - Second Brain AI Course](https://decodingml.substack.com/p/build-your-second-brain-ai-assistant)
