@@ -468,9 +468,9 @@ After completing Phase 1 and 2A, we paused to evaluate whether our current archi
 
 From research on PKM + AI architectures:
 
-| Practice | Industry Standard | Our Original Approach |
+| Practice | Industry Standard | Our Current Approach |
 |----------|------------------|----------------------|
-| Search | Hybrid: BM25 + vector + reranking | Vector only (pgvector) |
+| Search | Hybrid: BM25 + vector + reranking | ✅ Hybrid: Full-text + vector + RRF |
 | Storage | Human-readable files (markdown) | Structured Postgres tables |
 | Portability | Git-versioned, exportable | Locked in Supabase |
 | Complexity | Simpler = better | Custom bot + DB + hosting |
@@ -573,7 +573,7 @@ Through this research, we clarified what we're actually building:
 #### What We Over-Engineered
 - ❌ **Custom database schema** - knowledge locked in Postgres, not easily browsable
 - ❌ **Supabase dependency** - migration is painful if we want to switch
-- ❌ **Vector-only search** - missing BM25 for exact keyword matches
+- ✅ ~~**Vector-only search**~~ - Hybrid search (BM25 + vector + RRF) now implemented
 - ❌ **No human-readable layer** - can't just open a file and see knowledge
 - ❌ **Manual tool orchestration** - SDK provides this for free
 
@@ -606,8 +606,11 @@ Through this research, we clarified what we're actually building:
 - ✅ Thought Model v1 schema implemented
 - ✅ Code updated for new schema
 - ✅ SQL migration complete
-- 🚧 Deployment pending
-- ⏳ Claude Agent SDK integration (Phase 2.5b - after core migration verified)
+- ✅ Deployed to Railway
+- ✅ End-to-end flow verified
+- ✅ Hybrid search implemented (vector + full-text with RRF)
+- 🚧 Hybrid search SQL migration pending (run in Supabase)
+- ⏳ Claude Agent SDK integration (Phase 2.5b - after hybrid search verified)
 
 ---
 
@@ -843,10 +846,28 @@ src/
 - [x] Updated `/extract`, `/remember`, `/recall` handlers
 - [x] SQL migration executed in Supabase
 - [x] Existing data migrated
+- [x] Deployed to Railway
+- [x] End-to-end flow verified
+- [x] Hybrid search implemented (vector + full-text with RRF)
+
+**Hybrid Search Implementation:**
+- SQL migration (`scripts/hybrid-search-migration.sql`):
+  - Added `search_vector` (tsvector) column to thoughts table
+  - Created GIN index for full-text search
+  - Auto-populate trigger for search_vector on insert/update
+  - Weighted tsvector fields: A=claim, B=context, C=tags/actionables/evidence
+  - `hybrid_match_thoughts` SQL function using RRF (k=60)
+- Code changes:
+  - `SupabaseService`: Added `HybridSearchOptions`, `HybridThoughtSearchResult`, `hybridSearchThoughts()`
+  - `ThoughtRepository`: Added `ThoughtSearchOptions`, `hybridSearch()`
+  - `TelegramHandler`: Updated `handleRecall()` with filter parsing, hybrid search usage
+- New `/recall` features:
+  - Supports `--kind=TYPE` filter (e.g., `--kind=heuristic`)
+  - Supports `--tag=TAG` filter (e.g., `--tag=debugging`)
+  - Shows text match indicator (📝) when full-text contributed
 
 **Pending:**
-- [ ] Deploy to Railway
-- [ ] Test end-to-end
+- [ ] Run hybrid search SQL migration in Supabase
 - [ ] Implement Markdown vault persistence (deferred)
 
 ### Phase 2B: Article Ingestion

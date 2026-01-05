@@ -143,11 +143,11 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
   - [ ] Prompt user: "Similar to entry from 3 days ago - update or create new?"
   - [ ] Option to merge or keep separate
 
-- [ ] Search improvements
-  - [ ] Filter by date range
-  - [ ] Filter by tags
-  - [ ] Filter by knowledge type
-  - [ ] Hybrid search (semantic + keyword)
+- [ ] Search improvements (moved to Priority 5 in Current Sprint)
+  - [x] Hybrid search (semantic + keyword) → Priority 5
+  - [x] Filter by tags → Priority 5
+  - [x] Filter by knowledge type → Priority 5
+  - [ ] Filter by date range (optional, in Priority 5)
 
 ---
 
@@ -352,7 +352,24 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [x] Create GitHub vault repo and run migration script
 - [x] Verify vault sync working for new thoughts/sources
 
-### Priority 5: Claude Agent SDK Integration ← CURRENT
+### Priority 5: Improve Retrieval Quality ← CURRENT
+- [ ] Add hybrid search (BM25 + vector)
+  - [ ] Enable pg_trgm extension in Supabase (or use full-text search)
+  - [ ] Create BM25/keyword search function for thoughts
+  - [ ] Combine vector similarity + keyword match scores
+  - [ ] Implement score fusion (e.g., RRF or weighted combination)
+- [ ] Add LLM reranking for top-N results
+  - [ ] After hybrid search returns candidates, rerank with Claude
+  - [ ] Return reranked top 5 to user
+- [ ] Add decay weighting in retrieval scoring
+  - [ ] Factor in `created_at` age for relevance adjustment
+  - [ ] Allow manual "evergreen" marking to bypass decay
+- [ ] Filter options for `/recall`
+  - [ ] Filter by tags (e.g., `/recall kubernetes --tag=debugging`)
+  - [ ] Filter by kind (e.g., `/recall --kind=decision`)
+  - [ ] Filter by date range (optional)
+
+### Priority 6: Claude Agent SDK Integration
 - [ ] Install `@anthropic-ai/claude-agent-sdk`
 - [ ] Create MCP wrapper for Telegram handler
 - [ ] Create MCP wrapper for knowledge service
@@ -407,4 +424,4 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 **Last Updated:** January 5, 2026
 **Current Phase:** Phase 2.5 Foundation Migration 🚧
-**Next Milestone:** Claude Agent SDK integration for /read and /research commands
+**Next Milestone:** Hybrid search (BM25 + vector) for improved /recall reliability

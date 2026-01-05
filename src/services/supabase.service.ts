@@ -20,6 +20,22 @@ export interface ThoughtSearchResult extends Thought {
   similarity: number;
 }
 
+// Hybrid search result with both vector and text scores
+export interface HybridThoughtSearchResult extends ThoughtSearchResult {
+  textRank: number;
+  hybridScore: number;
+}
+
+// Options for hybrid search
+export interface HybridSearchOptions {
+  queryEmbedding: number[];
+  queryText: string;
+  limit?: number;
+  userId?: string;
+  filterTags?: string[];
+  filterKind?: string;
+}
+
 export class SupabaseService {
   private client: SupabaseClient;
 
@@ -396,6 +412,65 @@ export class SupabaseService {
       createdAt: new Date(item.created_at),
       updatedAt: new Date(item.created_at), // Approximation
       similarity: item.similarity,
+    }));
+  }
+
+  /**
+   * Hybrid search combining vector similarity and full-text search
+   * Uses RRF (Reciprocal Rank Fusion) to merge rankings
+   */
+  async hybridSearchThoughts(options: HybridSearchOptions): Promise<HybridThoughtSearchResult[]> {
+    const {
+      queryEmbedding,
+      queryText,
+      limit = 10,
+      userId,
+      filterTags,
+      filterKind,
+    } = options;
+
+    const rpcParams: Record<string, unknown> = {
+      query_embedding: queryEmbedding,
+      query_text: queryText,
+      match_count: limit,
+    };
+
+    if (userId) {
+      rpcParams.filter_user_id = userId;
+    }
+    if (filterTags && filterTags.length > 0) {
+      rpcParams.filter_tags = filterTags;
+    }
+    if (filterKind) {
+      rpcParams.filter_kind = filterKind;
+    }
+
+    const { data, error } = await this.client.rpc('hybrid_match_thoughts', rpcParams);
+
+    if (error) {
+      console.error('Failed to hybrid search thoughts:', error);
+      throw new Error(`Failed to hybrid search thoughts: ${error.message}`);
+    }
+
+    return data.map((item: any) => ({
+      id: item.id,
+      userId: item.user_id,
+      kind: item.kind,
+      domain: item.domain,
+      privacy: 'private' as const,
+      claim: item.claim,
+      stance: item.stance,
+      confidence: item.confidence,
+      context: item.context,
+      evidence: item.evidence || [],
+      examples: [],
+      actionables: item.actionables || [],
+      tags: item.tags || [],
+      createdAt: new Date(item.created_at),
+      updatedAt: new Date(item.created_at),
+      similarity: item.similarity,
+      textRank: item.text_rank,
+      hybridScore: item.hybrid_score,
     }));
   }
 

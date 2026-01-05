@@ -411,37 +411,49 @@ export class TelegramHandler {
       return;
     }
 
-    // Extract topic from command
+    // Extract topic and filters from command
     const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const topic = text.replace(/^\/recall\s*/i, '').trim();
+    const commandContent = text.replace(/^\/recall\s*/i, '').trim();
+
+    // Parse filters from command (e.g., "/recall kubernetes --kind=heuristic --tag=debugging")
+    const { topic, filters } = this.parseRecallFilters(commandContent);
 
     if (!topic) {
       await ctx.reply(
         '🔍 *Recall Thoughts*\n\n' +
         'Search your knowledge base by topic.\n\n' +
         'Usage: `/recall [topic]`\n\n' +
+        '*Filters (optional):*\n' +
+        '• `--kind=TYPE` - Filter by kind (heuristic, lesson, decision, etc.)\n' +
+        '• `--tag=TAG` - Filter by tag\n\n' +
         'Examples:\n' +
         '• `/recall kubernetes memory issues`\n' +
         '• `/recall debugging JVM`\n' +
-        '• `/recall TypeScript best practices`',
+        '• `/recall typescript --kind=heuristic`\n' +
+        '• `/recall docker --tag=debugging`',
         { parse_mode: 'Markdown' }
       );
       return;
     }
 
-    await ctx.reply(`🔍 Searching for "${topic}"...`);
+    const filterInfo = filters.kind || filters.tags?.length
+      ? ` (filters: ${filters.kind ? `kind=${filters.kind}` : ''}${filters.tags?.length ? ` tags=${filters.tags.join(',')}` : ''})`
+      : '';
+    await ctx.reply(`🔍 Searching for "${topic}"${filterInfo}...`);
 
     try {
       // Generate embedding for the search query
       const embedding = await this.openai.generateEmbedding(topic);
 
-      // Search thoughts with user filter
-      const results = await this.thoughtRepo.search(
-        embedding,
-        0.5,  // Lower threshold to catch more results
-        5,    // Limit to 5 results
-        userId
-      );
+      // Use hybrid search (vector + full-text)
+      const results = await this.thoughtRepo.hybridSearch({
+        queryEmbedding: embedding,
+        queryText: topic,
+        limit: 5,
+        userId,
+        filterKind: filters.kind,
+        filterTags: filters.tags,
+      });
 
       if (results.length === 0) {
         await ctx.reply(
@@ -449,6 +461,7 @@ export class TelegramHandler {
           'Try:\n' +
           '• Using different keywords\n' +
           '• Being more specific or general\n' +
+          '• Removing filters if any\n' +
           '• Having a conversation and using /extract to save thoughts first'
         );
         return;
@@ -459,13 +472,14 @@ export class TelegramHandler {
 
       results.forEach((result, index) => {
         const similarity = Math.round(result.similarity * 100);
+        const textMatch = result.textRank > 0 ? ' 📝' : ''; // Indicator if text search contributed
         const date = result.createdAt.toLocaleDateString('en-US', {
           month: 'short',
           day: 'numeric',
           year: 'numeric',
         });
 
-        response += `*${index + 1}. ${this.formatThoughtKind(result.kind)}* (${similarity}% match)\n`;
+        response += `*${index + 1}. ${this.formatThoughtKind(result.kind)}* (${similarity}%${textMatch})\n`;
         response += `📅 ${date} • ${result.domain}\n`;
 
         // Claim (the main content)
@@ -510,6 +524,38 @@ export class TelegramHandler {
       console.error('Failed to recall thoughts:', error);
       await ctx.reply('Sorry, I could not search your knowledge base. Please try again.');
     }
+  }
+
+  /**
+   * Parse filters from /recall command
+   * Example: "/recall kubernetes --kind=heuristic --tag=debugging"
+   */
+  private parseRecallFilters(content: string): { topic: string; filters: { kind?: string; tags?: string[] } } {
+    const filters: { kind?: string; tags?: string[] } = {};
+    let topic = content;
+
+    // Extract --kind=value
+    const kindMatch = content.match(/--kind=(\w+)/i);
+    if (kindMatch) {
+      filters.kind = kindMatch[1].toLowerCase();
+      topic = topic.replace(kindMatch[0], '').trim();
+    }
+
+    // Extract --tag=value (can appear multiple times)
+    const tagMatches = content.matchAll(/--tag=(\w+)/gi);
+    const tags: string[] = [];
+    for (const match of tagMatches) {
+      tags.push(match[1].toLowerCase());
+      topic = topic.replace(match[0], '').trim();
+    }
+    if (tags.length > 0) {
+      filters.tags = tags;
+    }
+
+    // Clean up extra spaces
+    topic = topic.replace(/\s+/g, ' ').trim();
+
+    return { topic, filters };
   }
 
   private formatThoughtKind(kind: string): string {

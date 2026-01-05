@@ -4,7 +4,20 @@ import {
   Source,
   SourceInsert,
 } from '../models';
-import { SupabaseService, ThoughtSearchResult } from '../services';
+import {
+  SupabaseService,
+  ThoughtSearchResult,
+  HybridThoughtSearchResult,
+} from '../services';
+
+export interface ThoughtSearchOptions {
+  queryText: string;
+  queryEmbedding: number[];
+  limit?: number;
+  userId?: string;
+  filterTags?: string[];
+  filterKind?: string;
+}
 
 export class ThoughtRepository {
   constructor(private supabase: SupabaseService) {}
@@ -44,6 +57,21 @@ export class ThoughtRepository {
     userId?: string
   ): Promise<ThoughtSearchResult[]> {
     return this.supabase.searchThoughts(embedding, threshold, limit, userId);
+  }
+
+  /**
+   * Hybrid search combining vector similarity and full-text search
+   * Uses RRF (Reciprocal Rank Fusion) for better recall
+   */
+  async hybridSearch(options: ThoughtSearchOptions): Promise<HybridThoughtSearchResult[]> {
+    return this.supabase.hybridSearchThoughts({
+      queryEmbedding: options.queryEmbedding,
+      queryText: options.queryText,
+      limit: options.limit,
+      userId: options.userId,
+      filterTags: options.filterTags,
+      filterKind: options.filterKind,
+    });
   }
 
   /**
