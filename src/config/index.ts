@@ -18,6 +18,11 @@ interface Config {
     url: string;
     key: string;
   };
+  vault: {
+    enabled: boolean;
+    githubToken: string;
+    githubRepo: string;  // format: "owner/repo"
+  };
   app: {
     nodeEnv: string;
     port: number;
@@ -31,6 +36,10 @@ function getEnvVar(key: string): string {
     throw new Error(`Missing required environment variable: ${key}`);
   }
   return value;
+}
+
+function getOptionalEnvVar(key: string): string {
+  return process.env[key] || '';
 }
 
 export const config: Config = {
@@ -48,6 +57,11 @@ export const config: Config = {
   supabase: {
     url: getEnvVar('SUPABASE_URL'),
     key: getEnvVar('SUPABASE_KEY'),
+  },
+  vault: {
+    enabled: !!process.env.GITHUB_VAULT_TOKEN && !!process.env.GITHUB_VAULT_REPO,
+    githubToken: getOptionalEnvVar('GITHUB_VAULT_TOKEN'),
+    githubRepo: getOptionalEnvVar('GITHUB_VAULT_REPO'),
   },
   app: {
     nodeEnv: process.env.NODE_ENV || 'development',

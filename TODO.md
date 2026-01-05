@@ -67,7 +67,7 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 **Goal:** Migrate to Thought Model v1 + Claude Agent SDK for agentic capabilities
 
-**Status:** In Progress - Deploy & Test
+**Status:** Schema Migration Complete ✅ - Moving to Claude Agent SDK Integration
 
 **Decision (Jan 5, 2026):** Claude Agent SDK chosen for velocity. ~$1/day token budget acceptable.
 
@@ -77,7 +77,7 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [x] Create `thoughts` table SQL (in scripts/phase-2.5-thought-model.sql)
 - [x] Create `thought_sources` junction table SQL (in scripts/phase-2.5-thought-model.sql)
 - [x] Run SQL migration in Supabase ✅
-- [ ] Implement Markdown vault writer (`vault/thoughts/`, `vault/sources/`)
+- [x] Implement Markdown vault writer (`vault/thoughts/`, `vault/sources/`)
 - [x] Update `extractAndSave()` to write new schema (clean cutover)
 - [x] Update `/remember` to create thoughts instead of knowledge_entries
 - [x] Update `/recall` to query thoughts table
@@ -85,18 +85,13 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [x] Migration script: existing knowledge_entries → thoughts (in SQL)
 
 ### Claude Agent SDK Integration
-- [ ] Install `@anthropic-ai/claude-agent-sdk`
-- [ ] Create MCP wrapper for Telegram handler
-- [ ] Create MCP wrapper for knowledge service
-- [ ] Update system prompts for agent mode
-- [ ] Build `/read [url]` with SDK's WebFetch
-- [ ] Build `/research [topic]` with SDK's WebSearch
+- See Priority 5 in Current Sprint below
 
 ### Markdown Vault
-- [ ] Define vault directory structure
-- [ ] Implement thought → markdown serializer
-- [ ] Implement source → markdown serializer
-- [ ] Git integration for version control (optional)
+- [x] Define vault directory structure (thoughts/YYYY/MM/, sources/YYYY/MM/)
+- [x] Implement thought → markdown serializer (Obsidian-compatible with YAML frontmatter)
+- [x] Implement source → markdown serializer (Obsidian-compatible with YAML frontmatter)
+- [x] Git integration for version control (via GitHub API)
 
 ---
 
@@ -348,12 +343,20 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [x] Update extraction to write thoughts + sources
 - [x] Update /remember to write thoughts
 - [x] Update /recall to query thoughts table
-- [ ] Implement Markdown vault persistence (deferred)
+- [x] Implement Markdown vault persistence (GitHub API integration)
 
-### Priority 4: Deploy & Test ← CURRENT
-- [ ] Deploy updated code to Railway
-- [ ] Verify end-to-end flow works
-- [ ] Test /remember, /recall, /extract with new schema
+### Priority 4: Deploy & Test ✅
+- [x] Deploy updated code to Railway
+- [x] Verify end-to-end flow works
+- [x] Test /remember, /recall, /extract with new schema
+
+### Priority 5: Claude Agent SDK Integration ← CURRENT
+- [ ] Install `@anthropic-ai/claude-agent-sdk`
+- [ ] Create MCP wrapper for Telegram handler
+- [ ] Create MCP wrapper for knowledge service
+- [ ] Update system prompts for agent mode
+- [ ] Build `/read [url]` with SDK's WebFetch
+- [ ] Build `/research [topic]` with SDK's WebSearch
 
 ---
 
@@ -401,4 +404,4 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 **Last Updated:** January 5, 2026
 **Current Phase:** Phase 2.5 Foundation Migration 🚧
-**Next Milestone:** Deploy and test Thought Model v1 end-to-end
+**Next Milestone:** Claude Agent SDK integration for /read and /research commands

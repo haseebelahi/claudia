@@ -2,12 +2,13 @@ import { Context, Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 
 import { config } from '../config';
-import { ExtractedThought, ThoughtKind } from '../models';
+import { ExtractedThought, Thought, Source, ThoughtKind } from '../models';
 import {
   ConversationStateService,
   LLMService,
   OpenAIService,
   SupabaseService,
+  vaultService,
 } from '../services';
 import {
   ConversationRepository,
@@ -635,7 +636,7 @@ export class TelegramHandler {
       const embedding = await this.openai.generateEmbedding(embeddingText);
 
       // Save as thought
-      await this.thoughtRepo.save({
+      const savedThought = await this.thoughtRepo.save({
         userId: pending.userId,
         kind: pending.thought.kind,
         domain: pending.thought.domain,
@@ -645,6 +646,11 @@ export class TelegramHandler {
         context: pending.thought.context,
         tags: pending.thought.tags,
         embedding,
+      });
+
+      // Write to vault (non-blocking)
+      this.writeThoughtToVault(savedThought).catch(err => {
+        console.error('Vault write failed (non-blocking):', err);
       });
 
       // Clean up pending
@@ -745,7 +751,7 @@ export class TelegramHandler {
       const embedding = await this.openai.generateEmbedding(embeddingText);
 
       // Save as thought
-      await this.thoughtRepo.save({
+      const savedThought = await this.thoughtRepo.save({
         userId: pending.userId,
         kind: newKind,
         domain: pending.thought.domain,
@@ -755,6 +761,11 @@ export class TelegramHandler {
         context: pending.thought.context,
         tags: pending.thought.tags,
         embedding,
+      });
+
+      // Write to vault (non-blocking)
+      this.writeThoughtToVault(savedThought).catch(err => {
+        console.error('Vault write failed (non-blocking):', err);
       });
 
       // Clean up pending
@@ -935,7 +946,12 @@ export class TelegramHandler {
       });
       console.log(`Conversation ${conversationId} marked as extracted`);
 
-      // Step 5: End conversation
+      // Step 5: Write to vault (non-blocking)
+      this.writeToVault(source, savedThoughts).catch(err => {
+        console.error('Vault write failed (non-blocking):', err);
+      });
+
+      // Step 6: End conversation
       this.conversationState.endConversation(userId);
       console.log(`Conversation ended for user ${userId}`);
 
@@ -950,6 +966,28 @@ export class TelegramHandler {
       // Keep conversation active so user can retry
       throw error;
     }
+  }
+
+  /**
+   * Write source and thoughts to the vault (non-blocking, fire-and-forget)
+   */
+  private async writeToVault(source: Source, thoughts: Thought[]): Promise<void> {
+    const thoughtIds = thoughts.map(t => t.id);
+    
+    // Write source first
+    await vaultService.writeSource(source, thoughtIds);
+    
+    // Write each thought
+    for (const thought of thoughts) {
+      await vaultService.writeThought(thought, [source.id]);
+    }
+  }
+
+  /**
+   * Write a single thought to the vault (for /remember command)
+   */
+  private async writeThoughtToVault(thought: Thought): Promise<void> {
+    await vaultService.writeThought(thought);
   }
 
   async launch(): Promise<void> {
