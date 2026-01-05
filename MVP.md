@@ -608,9 +608,8 @@ Through this research, we clarified what we're actually building:
 - ✅ SQL migration complete
 - ✅ Deployed to Railway
 - ✅ End-to-end flow verified
-- ✅ Hybrid search implemented (vector + full-text with RRF)
-- 🚧 Hybrid search SQL migration pending (run in Supabase)
-- ⏳ Claude Agent SDK integration (Phase 2.5b - after hybrid search verified)
+- ✅ Hybrid search implemented and verified (vector + full-text with RRF)
+- ⏳ Claude Agent SDK integration (next priority)
 
 ---
 
@@ -865,9 +864,10 @@ src/
   - Supports `--kind=TYPE` filter (e.g., `--kind=heuristic`)
   - Supports `--tag=TAG` filter (e.g., `--tag=debugging`)
   - Shows text match indicator (📝) when full-text contributed
+  - 25% minimum similarity threshold to filter noise
+  - Markdown escaping for special characters in output
 
 **Pending:**
-- [ ] Run hybrid search SQL migration in Supabase
 - [ ] Implement Markdown vault persistence (deferred)
 
 ### Phase 2B: Article Ingestion

@@ -352,24 +352,24 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [x] Create GitHub vault repo and run migration script
 - [x] Verify vault sync working for new thoughts/sources
 
-### Priority 5: Improve Retrieval Quality ← CURRENT
-- [ ] Add hybrid search (BM25 + vector)
-  - [ ] Enable pg_trgm extension in Supabase (or use full-text search)
-  - [ ] Create BM25/keyword search function for thoughts
-  - [ ] Combine vector similarity + keyword match scores
-  - [ ] Implement score fusion (e.g., RRF or weighted combination)
-- [ ] Add LLM reranking for top-N results
-  - [ ] After hybrid search returns candidates, rerank with Claude
-  - [ ] Return reranked top 5 to user
-- [ ] Add decay weighting in retrieval scoring
-  - [ ] Factor in `created_at` age for relevance adjustment
-  - [ ] Allow manual "evergreen" marking to bypass decay
-- [ ] Filter options for `/recall`
-  - [ ] Filter by tags (e.g., `/recall kubernetes --tag=debugging`)
-  - [ ] Filter by kind (e.g., `/recall --kind=decision`)
-  - [ ] Filter by date range (optional)
+### Priority 5: Improve Retrieval Quality ✅
+- [x] Add hybrid search (Full-text + vector with RRF)
+  - [x] Add `search_vector` tsvector column to thoughts table
+  - [x] Create GIN index for full-text search
+  - [x] Create `hybrid_match_thoughts` function with RRF (k=60)
+  - [x] Weighted tsvector: A=claim, B=context, C=tags/actionables/evidence
+- [x] Filter options for `/recall`
+  - [x] Filter by tags (e.g., `/recall kubernetes --tag=debugging`)
+  - [x] Filter by kind (e.g., `/recall --kind=heuristic`)
+  - [ ] Filter by date range (deferred)
+- [x] Quality improvements
+  - [x] 25% minimum similarity threshold to filter noise
+  - [x] Text match indicator (📝) when full-text contributed
+  - [x] Escape markdown special chars in output
+- [ ] Add LLM reranking for top-N results (deferred)
+- [ ] Add decay weighting in retrieval scoring (deferred)
 
-### Priority 6: Claude Agent SDK Integration
+### Priority 6: Claude Agent SDK Integration ← CURRENT
 - [ ] Install `@anthropic-ai/claude-agent-sdk`
 - [ ] Create MCP wrapper for Telegram handler
 - [ ] Create MCP wrapper for knowledge service
@@ -424,4 +424,4 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 **Last Updated:** January 5, 2026
 **Current Phase:** Phase 2.5 Foundation Migration 🚧
-**Next Milestone:** Hybrid search (BM25 + vector) for improved /recall reliability
+**Next Milestone:** Claude Agent SDK integration for agentic capabilities
