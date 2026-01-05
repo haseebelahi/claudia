@@ -86,4 +86,33 @@ export class ThoughtRepository {
   async getSources(thoughtId: string): Promise<Source[]> {
     return this.supabase.getThoughtSources(thoughtId);
   }
+
+  /**
+   * Get all thoughts linked to a source
+   */
+  async findBySource(sourceId: string): Promise<Thought[]> {
+    return this.supabase.getThoughtsBySource(sourceId);
+  }
+
+  /**
+   * Get count of thoughts linked to a source
+   */
+  async countBySource(sourceId: string): Promise<number> {
+    return this.supabase.getThoughtCountBySource(sourceId);
+  }
+
+  /**
+   * Delete thoughts by their IDs
+   */
+  async deleteMany(thoughtIds: string[]): Promise<void> {
+    return this.supabase.deleteThoughts(thoughtIds);
+  }
+
+  /**
+   * Delete all thoughts linked to a source
+   * Returns the count of deleted thoughts
+   */
+  async deleteBySource(sourceId: string): Promise<number> {
+    return this.supabase.deleteThoughtsBySource(sourceId);
+  }
 }

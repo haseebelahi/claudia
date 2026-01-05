@@ -279,6 +279,71 @@ export class SupabaseService {
   }
 
   /**
+   * Get all thoughts linked to a specific source
+   */
+  async getThoughtsBySource(sourceId: string): Promise<Thought[]> {
+    const { data, error } = await this.client
+      .from('thought_sources')
+      .select('thought_id, thoughts(*)')
+      .eq('source_id', sourceId);
+
+    if (error) {
+      throw new Error(`Failed to fetch thoughts for source: ${error.message}`);
+    }
+
+    return data.map((item: any) => this.mapThought(item.thoughts));
+  }
+
+  /**
+   * Get count of thoughts linked to a specific source
+   */
+  async getThoughtCountBySource(sourceId: string): Promise<number> {
+    const { count, error } = await this.client
+      .from('thought_sources')
+      .select('thought_id', { count: 'exact', head: true })
+      .eq('source_id', sourceId);
+
+    if (error) {
+      throw new Error(`Failed to count thoughts for source: ${error.message}`);
+    }
+
+    return count || 0;
+  }
+
+  /**
+   * Delete thoughts by their IDs
+   * Note: thought_sources entries are auto-deleted via ON DELETE CASCADE
+   */
+  async deleteThoughts(thoughtIds: string[]): Promise<void> {
+    if (thoughtIds.length === 0) return;
+
+    const { error } = await this.client
+      .from('thoughts')
+      .delete()
+      .in('id', thoughtIds);
+
+    if (error) {
+      console.error('Failed to delete thoughts:', error);
+      throw new Error(`Failed to delete thoughts: ${error.message}`);
+    }
+  }
+
+  /**
+   * Delete all thoughts linked to a source
+   * Returns the count of deleted thoughts
+   */
+  async deleteThoughtsBySource(sourceId: string): Promise<number> {
+    // First get the thought IDs
+    const thoughts = await this.getThoughtsBySource(sourceId);
+    if (thoughts.length === 0) return 0;
+
+    const thoughtIds = thoughts.map(t => t.id);
+    await this.deleteThoughts(thoughtIds);
+
+    return thoughtIds.length;
+  }
+
+  /**
    * Get sources for a user, optionally filtered by type
    * Returns most recent first
    */
@@ -306,6 +371,42 @@ export class SupabaseService {
     }
 
     return data.map((item: any) => this.mapSource(item));
+  }
+
+  /**
+   * Get sources for a user with thought counts
+   * Returns most recent first
+   */
+  async getSourcesWithThoughtCount(
+    userId: string,
+    type?: string,
+    limit: number = 10
+  ): Promise<Array<Source & { thoughtCount: number }>> {
+    let query = this.client
+      .from('sources')
+      .select(`
+        *,
+        thought_sources(count)
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (type) {
+      query = query.eq('type', type);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Failed to fetch sources with thought counts:', error);
+      throw new Error(`Failed to fetch sources: ${error.message}`);
+    }
+
+    return data.map((item: any) => ({
+      ...this.mapSource(item),
+      thoughtCount: item.thought_sources?.[0]?.count || 0,
+    }));
   }
 
   // Mappers for new types

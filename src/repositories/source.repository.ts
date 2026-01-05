@@ -31,6 +31,18 @@ export class SourceRepository {
   }
 
   /**
+   * Find sources for a user with thought counts
+   * Returns most recent first
+   */
+  async findByUserWithThoughtCount(
+    userId: string,
+    type?: string,
+    limit: number = 10
+  ): Promise<Array<Source & { thoughtCount: number }>> {
+    return this.supabase.getSourcesWithThoughtCount(userId, type, limit);
+  }
+
+  /**
    * Create a conversation source from a transcript
    */
   async createFromConversation(

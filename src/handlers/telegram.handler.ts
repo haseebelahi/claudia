@@ -174,8 +174,13 @@ export class TelegramHandler {
 
     try {
       // Conversations are memory-only - no need to save before extraction
-      await this.extractAndSave(userId);
-      await ctx.reply('✅ Knowledge extracted and saved!');
+      const { thoughtCount, isReextraction } = await this.extractAndSave(userId);
+      
+      if (isReextraction) {
+        await ctx.reply(`✅ Re-extracted ${thoughtCount} thought(s)! Previous thoughts were replaced.`);
+      } else {
+        await ctx.reply(`✅ Extracted ${thoughtCount} thought(s) and saved!`);
+      }
     } catch (error) {
       console.error('Failed to extract knowledge:', error);
       await ctx.reply('Failed to extract knowledge. Please try again.');
@@ -317,8 +322,8 @@ export class TelegramHandler {
     }
 
     try {
-      // Fetch last 10 conversation sources from DB
-      const conversations = await this.sourceRepo.findByUser(userId, 'conversation', 10);
+      // Fetch last 10 conversation sources from DB with thought counts
+      const conversations = await this.sourceRepo.findByUserWithThoughtCount(userId, 'conversation', 10);
 
       if (conversations.length === 0) {
         await ctx.reply(
@@ -347,14 +352,21 @@ export class TelegramHandler {
           : conv.raw.replace(/\n/g, ' ');
 
         const title = conv.title || 'Untitled';
+        
+        // Show extraction status
+        const extractionStatus = conv.thoughtCount > 0
+          ? `✅ ${conv.thoughtCount} thought${conv.thoughtCount > 1 ? 's' : ''}`
+          : '⚪ Not extracted';
 
         response += `*${index + 1}. ${this.escapeMarkdown(title)}*\n`;
         response += `📅 ${date} ${time}\n`;
+        response += `🧠 ${extractionStatus}\n`;
         response += `🆔 \`${conv.id}\`\n`;
         response += `💬 ${this.escapeMarkdown(preview)}\n\n`;
       });
 
       response += `\n💡 Use \`/load [id]\` to load a conversation into context`;
+      response += `\n🔄 Load and /extract again to re-extract with updated prompts`;
 
       await ctx.reply(response, { parse_mode: 'Markdown' });
     } catch (error) {
@@ -961,7 +973,7 @@ export class TelegramHandler {
 
   // saveConversation method removed - conversations are memory-only in Phase 2.5+
 
-  private async extractAndSave(userId: string): Promise<void> {
+  private async extractAndSave(userId: string): Promise<{ thoughtCount: number; isReextraction: boolean }> {
     const conversationId = this.conversationState.getConversationId(userId);
     const messages = this.conversationState.getMessages(userId);
 
@@ -970,22 +982,43 @@ export class TelegramHandler {
     }
 
     let savedThoughts: any[] = [];
+    let isReextraction = false;
+    let deletedThoughtCount = 0;
 
     try {
-      // Step 1: Extract thoughts using LLM
+      // Step 1: Check if this is a re-extraction (conversationId matches an existing source)
+      const existingSource = await this.sourceRepo.findById(conversationId);
+      
+      if (existingSource && existingSource.type === 'conversation') {
+        // This is a re-extraction - delete old thoughts first
+        isReextraction = true;
+        deletedThoughtCount = await this.thoughtRepo.deleteBySource(existingSource.id);
+        console.log(`Re-extraction: deleted ${deletedThoughtCount} old thought(s) from source ${existingSource.id}`);
+      }
+
+      // Step 2: Extract thoughts using LLM
       const result = await this.llm.extractThoughts(messages);
       console.log(`Extracted ${result.thoughts.length} thought(s) from conversation ${conversationId}`);
 
-      // Step 2: Create source from conversation transcript
+      // Step 3: Get or create source
+      let source: Source;
       const transcript = messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
-      const source = await this.sourceRepo.createFromConversation(
-        userId,
-        transcript,
-        `Conversation ${new Date().toISOString().split('T')[0]}`
-      );
-      console.log(`Source created: ${source.id}`);
+      
+      if (isReextraction && existingSource) {
+        // Reuse existing source (optionally update transcript if conversation continued)
+        source = existingSource;
+        // TODO: Could update source.raw here if transcript changed
+      } else {
+        // Create new source
+        source = await this.sourceRepo.createFromConversation(
+          userId,
+          transcript,
+          `Conversation ${new Date().toISOString().split('T')[0]}`
+        );
+        console.log(`Source created: ${source.id}`);
+      }
 
-      // Step 3: Save each thought with embedding
+      // Step 4: Save each thought with embedding
       for (const thought of result.thoughts) {
         // Generate embedding for the thought
         const embeddingText = `${thought.claim} ${thought.context || ''} ${thought.tags.join(' ')}`;
@@ -1014,16 +1047,16 @@ export class TelegramHandler {
         console.log(`Thought saved: ${savedThought.id} (${thought.kind})`);
       }
 
-      // No need to mark conversation as extracted - conversations are memory-only
-
-      // Step 4: Write to vault (non-blocking)
+      // Step 5: Write to vault (non-blocking)
       this.writeToVault(source, savedThoughts).catch(err => {
         console.error('Vault write failed (non-blocking):', err);
       });
 
-      // Step 5: End conversation
+      // Step 6: End conversation
       this.conversationState.endConversation(userId);
       console.log(`Conversation ended for user ${userId}`);
+
+      return { thoughtCount: savedThoughts.length, isReextraction };
 
     } catch (error) {
       // Log the failure stage

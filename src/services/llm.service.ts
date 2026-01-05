@@ -85,6 +85,9 @@ When you have enough:
 
 const EXTRACTION_SYSTEM_PROMPT = `Extract 1-N structured THOUGHTS from this conversation. Return ONLY valid JSON.
 
+## Goal
+Capture this as “second brain” material: prefer many *atomic*, retrievable thoughts over a few broad summaries.
+
 ## Output Format
 {
   "thoughts": [
@@ -96,11 +99,25 @@ const EXTRACTION_SYSTEM_PROMPT = `Extract 1-N structured THOUGHTS from this conv
       "confidence": 0.0-1.0,
       "context": "When/where this applies (1-2 sentences, optional)",
       "evidence": ["Supporting point 1", "..."],
+      "examples": ["Concrete example from the conversation", "..."],
       "actionables": ["What to do next", "..."],
       "tags": ["lowercase", "underscore_separated"]
     }
   ]
 }
+
+## Atomicity Rules (very important)
+- One thought = ONE main claim.
+- Split “combined” ideas into separate thoughts (e.g., architecture, constraints, procedure, monitoring plan).
+- Prefer *more* smaller thoughts vs fewer large ones.
+
+## Coverage Rules
+Extract distinct thoughts including (when present):
+- System components + responsibilities
+- Constraints/limits (concurrency, rate limits, business hours)
+- Procedures/workflows (scheduling, polling, retries)
+- Open problems / unresolved areas (capture as a statement with stance="question")
+- Future work / planned improvements (monitoring, alerts)
 
 ## Kind Selection
 | Kind | Use when... |
@@ -120,14 +137,13 @@ const EXTRACTION_SYSTEM_PROMPT = `Extract 1-N structured THOUGHTS from this conv
 - MUST be standalone (no "this", "that", "the issue" without context)
 - MUST be specific (not "debugging is hard" but "JVM ignores container limits without UseContainerSupport")
 - 1-2 sentences max
-- Written as a statement, not a question
+- Written as a statement; open questions should be phrased like "Open question: ..." (and set stance="question")
 
 ## Field Rules
 - confidence: 0.9+ verified, 0.7-0.9 strong belief, 0.5-0.7 tentative
-- evidence: Only if explicitly discussed in conversation
-- actionables: Only if there's a clear "do this next time"
+- evidence/examples/actionables: ONLY if explicitly discussed; DO NOT invent details
 - tags: 3-7 tags, lowercase, underscores for multi-word
-- Extract ALL distinct thoughts from the conversation (typically 1-3)
+- Extract ALL distinct thoughts from the conversation (N may be 5-25+ depending on how dense it is)
 
 ## Domain Selection
 - professional: Work, tech, career
@@ -208,16 +224,30 @@ export class LLMService {
         .map((msg) => `${msg.role}: ${msg.content}`)
         .join('\n');
 
+      // Heuristic: longer conversations should yield more atomic thoughts.
+      // We guide the model with a target/min count but do not hard-enforce it
+      // (to avoid incentivizing hallucinated thoughts).
+      const messageCount = messages.length;
+      const targetThoughts = Math.min(25, Math.max(6, Math.ceil(messageCount / 3)));
+      const minThoughts = Math.min(targetThoughts, Math.max(3, Math.ceil(targetThoughts * 0.6)));
+
+      const extractionSystemPrompt = `${EXTRACTION_SYSTEM_PROMPT}
+
+## This Run
+- Target thoughts: ~${targetThoughts}
+- Minimum thoughts (if supported by content): ${minThoughts}
+- If the conversation does not support that many without inventing, return fewer — but avoid collapsing unrelated ideas.`;
+
       const { text } = await generateText({
         model: this.client(config.llm.model),
-        system: EXTRACTION_SYSTEM_PROMPT,
+        system: extractionSystemPrompt,
         messages: [
           {
             role: 'user',
-            content: `Extract thoughts from this conversation:\n\n${conversationText}`,
+            content: `Extract thoughts from this conversation. Aim for ~${targetThoughts} atomic thoughts (minimum ${minThoughts} if supported by the content; do not hallucinate).\n\n${conversationText}`,
           },
         ],
-        maxTokens: 2048,
+        maxTokens: 4096,
       });
 
       const jsonText = text.trim();
@@ -247,8 +277,22 @@ export class LLMService {
         if (!thought.evidence) {
           thought.evidence = [];
         }
+        if (!thought.examples) {
+          thought.examples = [];
+        }
         if (!thought.actionables) {
           thought.actionables = [];
+        }
+
+        // Set safe defaults if the model omitted fields
+        if (!thought.stance) {
+          thought.stance = 'believe';
+        }
+        if (!thought.confidence) {
+          thought.confidence = 0.8;
+        }
+        if (!thought.domain) {
+          thought.domain = 'mixed';
         }
       }
 
