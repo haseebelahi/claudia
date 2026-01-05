@@ -237,26 +237,74 @@ export class TelegramHandler {
 
     const conversationId = this.conversationState.getConversationId(userId);
     
-    // Format the conversation nicely
-    let transcript = `📜 *Current Conversation* (${messages.length} messages)\n`;
-    transcript += `ID: \`${conversationId}\`\n\n`;
+    const TELEGRAM_MAX_LENGTH = 4096;
+    const footer = `\n💡 Use /extract to save this conversation as knowledge\n🗑 Use /clear to discard this conversation`;
     
-    messages.forEach((msg, index) => {
-      const speaker = msg.role === 'user' ? '👤 You' : '🤖 Assistant';
-      const time = msg.timestamp.toLocaleTimeString('en-US', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      });
-      transcript += `*${index + 1}. ${speaker}* (${time})\n`;
-      // Truncate long messages
-      const content = msg.content.length > 200 
-        ? msg.content.substring(0, 200) + '...' 
-        : msg.content;
-      transcript += `${content}\n\n`;
-    });
-
-    transcript += `\n💡 Use /extract to save this conversation as knowledge`;
-    transcript += `\n🗑 Use /clear to discard this conversation`;
+    // Format the conversation nicely, truncating from start if needed
+    let transcript = '';
+    let startIndex = 0;
+    
+    // Try to fit all messages, but truncate from start if needed
+    while (startIndex < messages.length) {
+      const header = `📜 *Current Conversation* (${messages.length} messages${startIndex > 0 ? `, showing last ${messages.length - startIndex}` : ''})\n`;
+      const id = `ID: \`${conversationId}\`\n\n`;
+      
+      transcript = header + id;
+      
+      if (startIndex > 0) {
+        transcript += `_...${startIndex} earlier message${startIndex > 1 ? 's' : ''} truncated..._\n\n`;
+      }
+      
+      for (let i = startIndex; i < messages.length; i++) {
+        const msg = messages[i];
+        const speaker = msg.role === 'user' ? '👤 You' : '🤖 Assistant';
+        const time = msg.timestamp.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+        transcript += `*${i + 1}. ${speaker}* (${time})\n`;
+        // Truncate long messages
+        const content = msg.content.length > 200 
+          ? msg.content.substring(0, 200) + '...' 
+          : msg.content;
+        transcript += `${content}\n\n`;
+      }
+      
+      // Check if it fits with footer
+      if (transcript.length + footer.length <= TELEGRAM_MAX_LENGTH) {
+        break;
+      }
+      
+      // Too long, try removing earliest message
+      startIndex++;
+      
+      // Safety check: if we can't fit even just the last message, truncate it more aggressively
+      if (startIndex >= messages.length) {
+        const lastMsg = messages[messages.length - 1];
+        const speaker = lastMsg.role === 'user' ? '👤 You' : '🤖 Assistant';
+        const time = lastMsg.timestamp.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+        
+        const headerWithTruncation = `📜 *Current Conversation* (${messages.length} messages, showing last 1)\n`;
+        const id = `ID: \`${conversationId}\`\n\n`;
+        const truncationNote = `_...${messages.length - 1} earlier messages truncated..._\n\n`;
+        const msgHeader = `*${messages.length}. ${speaker}* (${time})\n`;
+        
+        const overhead = headerWithTruncation.length + id.length + truncationNote.length + msgHeader.length + footer.length;
+        const maxContentLength = TELEGRAM_MAX_LENGTH - overhead - 10; // 10 char buffer
+        
+        const content = lastMsg.content.length > maxContentLength
+          ? lastMsg.content.substring(0, maxContentLength) + '...'
+          : lastMsg.content;
+        
+        transcript = headerWithTruncation + id + truncationNote + msgHeader + content + '\n\n';
+        break;
+      }
+    }
+    
+    transcript += footer;
 
     await ctx.reply(transcript, { parse_mode: 'Markdown' });
   }
