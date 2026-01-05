@@ -67,7 +67,7 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 **Goal:** Migrate to Thought Model v1 + Claude Agent SDK for agentic capabilities
 
-**Status:** Schema Migration Complete ✅ - Moving to Claude Agent SDK Integration
+**Status:** Schema Migration Complete ✅ | Markdown Vault Complete ✅ - Moving to Claude Agent SDK Integration
 
 **Decision (Jan 5, 2026):** Claude Agent SDK chosen for velocity. ~$1/day token budget acceptable.
 
@@ -277,7 +277,7 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [ ] Web interface for browsing knowledge
 - [ ] Mobile app (optional)
 - [ ] API for external access
-- [ ] Obsidian/Notion export
+- [x] Obsidian/Notion export
 
 ### Advanced Features
 - [ ] Knowledge graph visualization
@@ -290,7 +290,7 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [ ] Redis caching for multi-instance deployments
 - [ ] Separate read replicas for search
 - [ ] Backup and restore functionality
-- [ ] Knowledge export (JSON, Markdown)
+- [x] Knowledge export (JSON, Markdown)
 - [ ] Migration tools between databases
 
 ### Analytics
@@ -349,6 +349,8 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 - [x] Deploy updated code to Railway
 - [x] Verify end-to-end flow works
 - [x] Test /remember, /recall, /extract with new schema
+- [x] Create GitHub vault repo and run migration script
+- [x] Verify vault sync working for new thoughts/sources
 
 ### Priority 5: Claude Agent SDK Integration ← CURRENT
 - [ ] Install `@anthropic-ai/claude-agent-sdk`
@@ -395,7 +397,8 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 |---------|------|-----------|
 | 0.1.0 | 2026-01-01 | Phase 1 complete - Core extraction working |
 | 0.2.0 | 2026-01-02 | Phase 2A complete - /recall and /remember commands |
-| 0.3.0 | TBD | Phase 2.5 - Thought Model v1 + Claude Agent SDK |
+| 0.2.5 | 2026-01-05 | Thought Model v1 schema + Markdown vault with GitHub sync |
+| 0.3.0 | TBD | Phase 2.5 - Claude Agent SDK integration |
 | 0.4.0 | TBD | Phase 2B/C - /read and /research commands |
 | 0.5.0 | TBD | Phase 3 - Profile building |
 | 1.0.0 | TBD | Phases 1-4 complete, production-ready |
