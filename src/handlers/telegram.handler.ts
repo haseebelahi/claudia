@@ -455,7 +455,11 @@ export class TelegramHandler {
         filterTags: filters.tags,
       });
 
-      if (results.length === 0) {
+      // Filter out low-relevance results (below 25% similarity threshold)
+      const MIN_SIMILARITY_THRESHOLD = 0.25;
+      const filteredResults = results.filter(r => r.similarity >= MIN_SIMILARITY_THRESHOLD);
+
+      if (filteredResults.length === 0) {
         await ctx.reply(
           `No matching thoughts found for "${topic}".\n\n` +
           'Try:\n' +
@@ -468,9 +472,9 @@ export class TelegramHandler {
       }
 
       // Format results
-      let response = `🧠 *Found ${results.length} thought${results.length > 1 ? 's' : ''}*\n\n`;
+      let response = `🧠 *Found ${filteredResults.length} thought${filteredResults.length > 1 ? 's' : ''}*\n\n`;
 
-      results.forEach((result, index) => {
+      filteredResults.forEach((result, index) => {
         const similarity = Math.round(result.similarity * 100);
         const textMatch = result.textRank > 0 ? ' 📝' : ''; // Indicator if text search contributed
         const date = result.createdAt.toLocaleDateString('en-US', {
