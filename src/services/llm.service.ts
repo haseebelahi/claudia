@@ -2,106 +2,168 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 
 import { config } from '../config';
-import { CategorizationResult, ExtractedKnowledge, Message } from '../models';
+import {
+  CategorizationResult,
+  ExtractedKnowledge,
+  ExtractedThought,
+  ThoughtExtractionResult,
+  ThoughtKind,
+  Message,
+} from '../models';
 
-const CONVERSATION_SYSTEM_PROMPT = `You are a personal knowledge extraction assistant built for a software engineer with 8+ years of experience. You live in Telegram and help them capture what they've LEARNED (not just seen).
+const CONVERSATION_SYSTEM_PROMPT = `You are a personal knowledge extraction assistant. Your job is to help capture learnings as standalone, retrievable thoughts through focused conversation.
 
-## Your Purpose
-You're the "active layer" of a personal knowledge system. Your job is to extract structured knowledge from conversations about:
-- Problems they solved (especially technical ones)
-- Insights they gained
-- Decisions they made and why
-- Learnings from work, side projects, reading, or life
+## Your User
+- Software engineer with 8+ years experience
+- Interests: tech, science, personal finance, investing
+- Goal: Build a "second brain" for idea generation and memory retrieval
+- Captures both professional AND personal knowledge
 
-## How You Work
-You're built using:
-- Telegram Bot API (for chat interface)
-- Claude/LLMs via OpenRouter (that's you - model-agnostic via Vercel AI SDK)
-- OpenAI embeddings (for semantic search)
-- Supabase (Postgres + pgvector for storage)
+## Extraction Goal
+Each conversation should yield 1-N THOUGHTS. A thought is:
+- A standalone CLAIM (1-2 sentences, readable without the conversation)
+- Classified by KIND (heuristic, lesson, decision, observation, principle, fact, preference, feeling, goal, prediction)
+- Tagged and linked to this conversation as its source
 
-Your conversations get extracted into structured knowledge entries with embeddings for future retrieval.
+## Conversation Strategy
 
-## Your Personality
-- Be conversational and casual, not formal
-- Mirror the user's communication style
-- Ask 2-3 follow-up questions to clarify:
-  * What was the problem/situation?
-  * What did they try?
-  * What worked/what they learned?
-  * What they'd do differently next time?
-- Keep responses short and natural
-- When you sense the conversation has captured the key learning, let them know they can use /extract to save it
+### Step 1: Identify the kind from the opener
+Listen for signals:
+- "I just fixed..." / "I debugged..." → heuristic
+- "I realized..." / "I learned..." → lesson
+- "I decided..." / "I chose..." → decision
+- "I noticed..." / "I've been seeing..." → observation
+- "I think..." / "I believe..." → principle or observation
+- "I prefer..." / "I like..." → preference
+- "I feel..." → feeling
+- "I want to..." / "My goal is..." → goal
 
-## Context
-The user is building YOU right now - a personal knowledge assistant. They want to:
-- Capture learnings from their 8+ years as a software engineer
-- Eventually generate LinkedIn posts, blog topics, and tech talk ideas from this knowledge
-- Build their "personal operating system" around their accumulated wisdom
+### Step 2: Ask targeted follow-ups (2-3 max)
 
-Be helpful in extracting their knowledge, and be aware that they're simultaneously building and using you!`;
+FOR HEURISTIC (debugging/fix):
+- "What was the symptom or error?"
+- "What was the root cause?"
+- "What's the fix?" (skip if already stated)
 
+FOR LESSON (learning from experience):
+- "What happened?"
+- "What's the takeaway?"
+- "What will you do differently?"
 
-const EXTRACTION_SYSTEM_PROMPT = `You are a knowledge extraction system for a personal knowledge assistant. Your job is to analyze conversations and extract structured, searchable knowledge.
+FOR DECISION:
+- "What were the options?"
+- "What made you choose this one?"
 
-## Context
-The user is a software engineer with 8+ years of experience. They want to capture:
-- Technical problems they solved and how
-- Insights about technology, engineering, or life
-- Decisions they made and the reasoning
-- Key learnings from any domain (work, hobbies, finance, science, etc.)
+FOR OBSERVATION:
+- "Where have you seen this?"
+- "What do you think it means?"
 
-## Your Task
-Extract the core knowledge from the conversation into structured format.
+FOR PREFERENCE/FEELING:
+- "Why this preference?" or "What triggers this feeling?"
+- "Any exceptions?"
 
-Return ONLY valid JSON in this exact format:
-{
-  "type": "problem_solution" | "insight" | "decision" | "learning",
-  "problem": "one sentence problem statement or topic",
-  "context": "what they were working on or the situation",
-  "solution": "what resolved it, what they learned, or the conclusion",
-  "learnings": ["key takeaway 1", "key takeaway 2"],
-  "tags": ["tag1", "tag2", "tag3"]
-}
+FOR GOAL:
+- "Why does this matter to you?"
+- "What's the first step?"
+
+### Step 3: Crystallize (only if needed)
+If the claim isn't already clear, reflect it back:
+- "So the key point is: [draft claim]. Sound right?"
+
+### Step 4: Signal completion
+When you have enough:
+- "Got it. Use /extract when ready, or keep going if there's more."
 
 ## Rules
-- Choose type based on conversation:
-  * problem_solution: They debugged something, solved a technical issue
-  * insight: They realized something important or had an "aha" moment
-  * decision: They chose between options and explained why
-  * learning: They learned something new (from reading, experience, etc.)
-- Keep problem and solution concise but clear (1-2 sentences each)
-- Extract 2-5 key learnings (actionable takeaways)
-- Generate 3-7 relevant tags (technologies, concepts, domains)
-- Tags should be lowercase, use underscores for multi-word (e.g., "kubernetes", "jvm_memory", "debugging")
-- Return ONLY the JSON object, no markdown formatting, no extra text`;
+- SHORT responses (1-3 sentences)
+- NEVER ask generic questions ("tell me more", "anything else?")
+- NEVER repeat back information already given
+- SKIP questions whose answers were already provided
+- Stay casual, mirror user's tone
+- If multiple distinct thoughts emerge, that's fine - extraction will capture all of them`;
 
-const CATEGORIZATION_SYSTEM_PROMPT = `You are a categorization system for a personal knowledge assistant. Your job is to categorize quick facts/notes that the user wants to remember.
 
-## Categories
-- fact: Quick facts, data points, numbers, dates, information (e.g., "Python 3.12 was released in October 2023")
-- preference: Personal preferences for tools, services, products, approaches (e.g., "I prefer Delta airlines for domestic flights")
-- event: Important dates, birthdays, anniversaries, appointments (e.g., "Mom's birthday is March 15")
-- relationship: Information about people - who they are, context, how you know them (e.g., "John Smith is my manager at Acme Corp")
-- goal: Things you're working toward, aspirations, objectives (e.g., "I want to learn Rust this year")
+const EXTRACTION_SYSTEM_PROMPT = `Extract 1-N structured THOUGHTS from this conversation. Return ONLY valid JSON.
 
-## Your Task
-Analyze the input and:
-1. Categorize it into one of the 5 types above
-2. Create a brief summary (1-2 sentences) that captures the key information
-3. Generate 2-5 relevant tags
-
-Return ONLY valid JSON in this exact format:
+## Output Format
 {
-  "type": "fact" | "preference" | "event" | "relationship" | "goal",
-  "summary": "brief summary of the information",
+  "thoughts": [
+    {
+      "kind": "heuristic|lesson|decision|observation|principle|fact|preference|feeling|goal|prediction",
+      "domain": "professional|personal|mixed",
+      "claim": "1-2 sentence standalone statement",
+      "stance": "believe|tentative|question",
+      "confidence": 0.0-1.0,
+      "context": "When/where this applies (1-2 sentences, optional)",
+      "evidence": ["Supporting point 1", "..."],
+      "actionables": ["What to do next", "..."],
+      "tags": ["lowercase", "underscore_separated"]
+    }
+  ]
+}
+
+## Kind Selection
+| Kind | Use when... |
+|------|-------------|
+| heuristic | "When X, do Y" - fixes, techniques, workarounds |
+| lesson | "I learned that..." - reflections on experience |
+| decision | "I chose X because..." - choices with rationale |
+| observation | "I noticed..." - patterns, trends |
+| principle | "Always/never do X" - firm rules |
+| fact | "X is true" - information, dates, data |
+| preference | "I prefer X" - personal choices |
+| feeling | "I feel X when Y" - emotional patterns |
+| goal | "I want to X" - aspirations |
+| prediction | "I expect X will..." - forecasts |
+
+## Claim Rules
+- MUST be standalone (no "this", "that", "the issue" without context)
+- MUST be specific (not "debugging is hard" but "JVM ignores container limits without UseContainerSupport")
+- 1-2 sentences max
+- Written as a statement, not a question
+
+## Field Rules
+- confidence: 0.9+ verified, 0.7-0.9 strong belief, 0.5-0.7 tentative
+- evidence: Only if explicitly discussed in conversation
+- actionables: Only if there's a clear "do this next time"
+- tags: 3-7 tags, lowercase, underscores for multi-word
+- Extract ALL distinct thoughts from the conversation (typically 1-3)
+
+## Domain Selection
+- professional: Work, tech, career
+- personal: Life, relationships, hobbies, health, finance
+- mixed: Overlaps both
+
+Return ONLY the JSON object, no markdown formatting, no extra text.`;
+
+const CATEGORIZATION_SYSTEM_PROMPT = `Categorize this quick note as a THOUGHT. Return ONLY valid JSON.
+
+## Output Format
+{
+  "kind": "fact|preference|feeling|goal|observation",
+  "domain": "professional|personal|mixed",
+  "claim": "Rewritten as standalone statement (1-2 sentences)",
+  "stance": "believe|tentative",
+  "confidence": 0.7-1.0,
   "tags": ["tag1", "tag2"]
 }
 
+## Kind Selection for /remember
+- fact: Information, dates, numbers, events, people ("Python 3.12 released Oct 2023", "Mom's birthday is March 15", "John is my manager")
+- preference: Personal choices ("I prefer Delta for domestic flights")
+- feeling: Emotional patterns ("I feel drained after long meetings")
+- goal: Aspirations ("Learn Rust this year")
+- observation: Noticed patterns ("Morning is my most productive time")
+
+## Domain Selection
+- professional: Work, tech, career related
+- personal: Life, relationships, hobbies, health, finance
+- mixed: Overlaps both
+
 ## Rules
-- Choose the most appropriate category based on the nature of the information
-- Keep summary concise but include all key details
-- Tags should be lowercase, use underscores for multi-word
+- Rewrite input as a clear, standalone claim
+- Keep claim concise but complete
+- Tags: 2-5, lowercase, underscores for multi-word
 - Return ONLY the JSON object, no markdown formatting, no extra text`;
 
 export class LLMService {
@@ -136,7 +198,11 @@ export class LLMService {
     }
   }
 
-  async extractKnowledge(messages: Message[]): Promise<ExtractedKnowledge> {
+  /**
+   * Extract thoughts from a conversation (Thought Model v1)
+   * Returns 1-N thoughts extracted from the conversation
+   */
+  async extractThoughts(messages: Message[]): Promise<ThoughtExtractionResult> {
     try {
       const conversationText = messages
         .map((msg) => `${msg.role}: ${msg.content}`)
@@ -148,35 +214,63 @@ export class LLMService {
         messages: [
           {
             role: 'user',
-            content: `Extract knowledge from this conversation:\n\n${conversationText}`,
+            content: `Extract thoughts from this conversation:\n\n${conversationText}`,
           },
         ],
         maxTokens: 2048,
       });
 
       const jsonText = text.trim();
-      const extracted = JSON.parse(jsonText) as ExtractedKnowledge;
+      const result = JSON.parse(jsonText) as ThoughtExtractionResult;
 
-      // Validate the extracted knowledge
-      if (!extracted.type || !extracted.problem || !extracted.solution) {
-        throw new Error('Invalid extraction: missing required fields');
+      // Validate the extraction result
+      if (!result.thoughts || !Array.isArray(result.thoughts) || result.thoughts.length === 0) {
+        throw new Error('Invalid extraction: no thoughts extracted');
       }
 
-      return extracted;
+      // Validate each thought
+      const validKinds: ThoughtKind[] = [
+        'heuristic', 'lesson', 'decision', 'observation', 'principle',
+        'fact', 'preference', 'feeling', 'goal', 'prediction'
+      ];
+
+      for (const thought of result.thoughts) {
+        if (!thought.kind || !validKinds.includes(thought.kind)) {
+          throw new Error(`Invalid thought kind: ${thought.kind}`);
+        }
+        if (!thought.claim) {
+          throw new Error('Invalid thought: missing claim');
+        }
+        if (!thought.tags) {
+          thought.tags = [];
+        }
+        if (!thought.evidence) {
+          thought.evidence = [];
+        }
+        if (!thought.actionables) {
+          thought.actionables = [];
+        }
+      }
+
+      return result;
     } catch (error) {
-      console.error('LLM API error during extraction:', error);
+      console.error('LLM API error during thought extraction:', error);
       if (error instanceof SyntaxError) {
         console.error('Failed to parse extraction JSON');
-        throw new Error('Failed to parse extracted knowledge');
+        throw new Error('Failed to parse extracted thoughts');
       }
       if (error instanceof Error) {
-        throw new Error(`Failed to extract knowledge: ${error.message}`);
+        throw new Error(`Failed to extract thoughts: ${error.message}`);
       }
       throw error;
     }
   }
 
-  async categorizeFact(fact: string): Promise<CategorizationResult> {
+  /**
+   * Categorize a quick note as a thought (for /remember command)
+   * Returns a single thought
+   */
+  async categorizeAsThought(fact: string): Promise<ExtractedThought> {
     try {
       const { text } = await generateText({
         model: this.client(config.llm.model),
@@ -184,40 +278,110 @@ export class LLMService {
         messages: [
           {
             role: 'user',
-            content: `Categorize this fact/note:\n\n${fact}`,
+            content: `Categorize this note:\n\n${fact}`,
           },
         ],
         maxTokens: 512,
       });
 
       const jsonText = text.trim();
-      const result = JSON.parse(jsonText) as CategorizationResult;
+      const result = JSON.parse(jsonText) as ExtractedThought;
 
       // Validate the result
-      const validTypes = ['fact', 'preference', 'event', 'relationship', 'goal'];
-      if (!result.type || !validTypes.includes(result.type)) {
-        throw new Error('Invalid categorization: invalid or missing type');
+      const validKinds: ThoughtKind[] = ['fact', 'preference', 'feeling', 'goal', 'observation'];
+      if (!result.kind || !validKinds.includes(result.kind)) {
+        throw new Error(`Invalid thought kind: ${result.kind}`);
       }
-      if (!result.summary) {
-        throw new Error('Invalid categorization: missing summary');
+      if (!result.claim) {
+        throw new Error('Invalid categorization: missing claim');
       }
 
-      // Ensure tags is an array
+      // Ensure arrays exist
       if (!result.tags) {
         result.tags = [];
       }
 
+      // Set defaults for optional fields
+      if (!result.stance) {
+        result.stance = 'believe';
+      }
+      if (!result.confidence) {
+        result.confidence = 0.8;
+      }
+      if (!result.domain) {
+        result.domain = 'personal';
+      }
+
       return result;
     } catch (error) {
-      console.error('LLM API error during categorization:', error);
+      console.error('LLM API error during thought categorization:', error);
       if (error instanceof SyntaxError) {
         console.error('Failed to parse categorization JSON');
         throw new Error('Failed to parse categorization result');
       }
       if (error instanceof Error) {
-        throw new Error(`Failed to categorize fact: ${error.message}`);
+        throw new Error(`Failed to categorize as thought: ${error.message}`);
       }
       throw error;
     }
+  }
+
+  // ===========================================================================
+  // LEGACY METHODS (kept for backward compatibility during migration)
+  // ===========================================================================
+
+  /**
+   * @deprecated Use extractThoughts() instead. This method uses the old schema.
+   */
+  async extractKnowledge(messages: Message[]): Promise<ExtractedKnowledge> {
+    // For backward compatibility, extract thoughts and convert to old format
+    const result = await this.extractThoughts(messages);
+    const thought = result.thoughts[0]; // Take the first thought
+
+    // Map new kinds to old types
+    const kindToType: Record<ThoughtKind, ExtractedKnowledge['type']> = {
+      heuristic: 'problem_solution',
+      lesson: 'learning',
+      decision: 'decision',
+      observation: 'insight',
+      principle: 'insight',
+      fact: 'learning',
+      preference: 'learning',
+      feeling: 'insight',
+      goal: 'learning',
+      prediction: 'insight',
+    };
+
+    return {
+      type: kindToType[thought.kind] || 'learning',
+      problem: thought.claim,
+      context: thought.context || '',
+      solution: thought.claim, // In the new model, claim contains the key insight
+      learnings: thought.actionables || [],
+      tags: thought.tags,
+    };
+  }
+
+  /**
+   * @deprecated Use categorizeAsThought() instead. This method uses the old schema.
+   */
+  async categorizeFact(fact: string): Promise<CategorizationResult> {
+    // For backward compatibility, categorize as thought and convert to old format
+    const thought = await this.categorizeAsThought(fact);
+
+    // Map new kinds to old types
+    const kindToType: Record<string, CategorizationResult['type']> = {
+      fact: 'fact',
+      preference: 'preference',
+      feeling: 'goal', // closest match
+      goal: 'goal',
+      observation: 'fact',
+    };
+
+    return {
+      type: kindToType[thought.kind] || 'fact',
+      summary: thought.claim,
+      tags: thought.tags,
+    };
   }
 }

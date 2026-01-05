@@ -2,7 +2,7 @@ import { Context, Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 
 import { config } from '../config';
-import { RememberEntryType, CategorizationResult } from '../models';
+import { ExtractedThought, ThoughtKind } from '../models';
 import {
   ConversationStateService,
   LLMService,
@@ -11,14 +11,15 @@ import {
 } from '../services';
 import {
   ConversationRepository,
-  KnowledgeRepository,
+  ThoughtRepository,
+  SourceRepository,
 } from '../repositories';
 
 // Pending remember confirmations - maps uniqueId to pending data
 interface PendingRemember {
   userId: string;
   fact: string;
-  categorization: CategorizationResult;
+  thought: ExtractedThought;
   createdAt: Date;
 }
 
@@ -28,7 +29,8 @@ export class TelegramHandler {
   private llm: LLMService;
   private openai: OpenAIService;
   private conversationRepo: ConversationRepository;
-  private knowledgeRepo: KnowledgeRepository;
+  private thoughtRepo: ThoughtRepository;
+  private sourceRepo: SourceRepository;
   private pendingRemember: Map<string, PendingRemember> = new Map();
 
   constructor() {
@@ -36,10 +38,11 @@ export class TelegramHandler {
     this.conversationState = new ConversationStateService();
     this.llm = new LLMService();
     this.openai = new OpenAIService();
-    
+
     const supabase = new SupabaseService();
     this.conversationRepo = new ConversationRepository(supabase);
-    this.knowledgeRepo = new KnowledgeRepository(supabase);
+    this.thoughtRepo = new ThoughtRepository(supabase);
+    this.sourceRepo = new SourceRepository(supabase);
 
     this.setupHandlers();
   }
@@ -413,7 +416,7 @@ export class TelegramHandler {
 
     if (!topic) {
       await ctx.reply(
-        '🔍 *Recall Knowledge*\n\n' +
+        '🔍 *Recall Thoughts*\n\n' +
         'Search your knowledge base by topic.\n\n' +
         'Usage: `/recall [topic]`\n\n' +
         'Examples:\n' +
@@ -431,8 +434,8 @@ export class TelegramHandler {
       // Generate embedding for the search query
       const embedding = await this.openai.generateEmbedding(topic);
 
-      // Search knowledge base with user filter
-      const results = await this.knowledgeRepo.search(
+      // Search thoughts with user filter
+      const results = await this.thoughtRepo.search(
         embedding,
         0.5,  // Lower threshold to catch more results
         5,    // Limit to 5 results
@@ -441,17 +444,17 @@ export class TelegramHandler {
 
       if (results.length === 0) {
         await ctx.reply(
-          `No matching knowledge found for "${topic}".\n\n` +
+          `No matching thoughts found for "${topic}".\n\n` +
           'Try:\n' +
           '• Using different keywords\n' +
           '• Being more specific or general\n' +
-          '• Having a conversation and using /extract to save knowledge first'
+          '• Having a conversation and using /extract to save thoughts first'
         );
         return;
       }
 
       // Format results
-      let response = `🧠 *Found ${results.length} result${results.length > 1 ? 's' : ''}*\n\n`;
+      let response = `🧠 *Found ${results.length} thought${results.length > 1 ? 's' : ''}*\n\n`;
 
       results.forEach((result, index) => {
         const similarity = Math.round(result.similarity * 100);
@@ -461,37 +464,35 @@ export class TelegramHandler {
           year: 'numeric',
         });
 
-        response += `*${index + 1}. ${this.formatEntryType(result.type)}* (${similarity}% match)\n`;
-        response += `📅 ${date}\n`;
-        
-        // Problem/topic
-        if (result.problem) {
-          const problem = result.problem.length > 150 
-            ? result.problem.substring(0, 150) + '...' 
-            : result.problem;
-          response += `📌 ${problem}\n`;
+        response += `*${index + 1}. ${this.formatThoughtKind(result.kind)}* (${similarity}% match)\n`;
+        response += `📅 ${date} • ${result.domain}\n`;
+
+        // Claim (the main content)
+        const claim = result.claim.length > 200
+          ? result.claim.substring(0, 200) + '...'
+          : result.claim;
+        response += `💡 ${claim}\n`;
+
+        // Context if available
+        if (result.context) {
+          const context = result.context.length > 100
+            ? result.context.substring(0, 100) + '...'
+            : result.context;
+          response += `📌 ${context}\n`;
         }
 
-        // Solution/answer
-        if (result.solution) {
-          const solution = result.solution.length > 200 
-            ? result.solution.substring(0, 200) + '...' 
-            : result.solution;
-          response += `💡 ${solution}\n`;
-        }
-
-        // Key learnings (show first 2)
-        if (result.learnings && result.learnings.length > 0) {
-          const learningsToShow = result.learnings.slice(0, 2);
-          response += `📝 Learnings:\n`;
-          learningsToShow.forEach((learning) => {
-            const truncated = learning.length > 100 
-              ? learning.substring(0, 100) + '...' 
-              : learning;
+        // Actionables (show first 2)
+        if (result.actionables && result.actionables.length > 0) {
+          const actionablesToShow = result.actionables.slice(0, 2);
+          response += `📝 Actions:\n`;
+          actionablesToShow.forEach((action) => {
+            const truncated = action.length > 80
+              ? action.substring(0, 80) + '...'
+              : action;
             response += `  • ${truncated}\n`;
           });
-          if (result.learnings.length > 2) {
-            response += `  • _(+${result.learnings.length - 2} more)_\n`;
+          if (result.actionables.length > 2) {
+            response += `  • _(+${result.actionables.length - 2} more)_\n`;
           }
         }
 
@@ -505,26 +506,25 @@ export class TelegramHandler {
 
       await ctx.reply(response, { parse_mode: 'Markdown' });
     } catch (error) {
-      console.error('Failed to recall knowledge:', error);
+      console.error('Failed to recall thoughts:', error);
       await ctx.reply('Sorry, I could not search your knowledge base. Please try again.');
     }
   }
 
-  private formatEntryType(type: string): string {
-    const typeLabels: Record<string, string> = {
-      problem_solution: 'Problem & Solution',
-      insight: 'Insight',
+  private formatThoughtKind(kind: string): string {
+    const kindLabels: Record<string, string> = {
+      heuristic: 'Heuristic',
+      lesson: 'Lesson',
       decision: 'Decision',
-      learning: 'Learning',
+      observation: 'Observation',
+      principle: 'Principle',
       fact: 'Fact',
       preference: 'Preference',
-      event: 'Event',
-      relationship: 'Relationship',
+      feeling: 'Feeling',
       goal: 'Goal',
-      article_summary: 'Article Summary',
-      research: 'Research',
+      prediction: 'Prediction',
     };
-    return typeLabels[type] || type;
+    return kindLabels[kind] || kind;
   }
 
   private async handleRemember(ctx: Context): Promise<void> {
@@ -541,14 +541,14 @@ export class TelegramHandler {
     if (!fact) {
       await ctx.reply(
         '📝 *Remember Something*\n\n' +
-        'Quickly save a fact, preference, event, relationship, or goal.\n\n' +
+        'Quickly save a fact, preference, feeling, goal, or observation.\n\n' +
         'Usage: `/remember [what to remember]`\n\n' +
         'Examples:\n' +
         '• `/remember Python 3.12 was released in October 2023`\n' +
         '• `/remember I prefer Delta airlines for domestic flights`\n' +
-        '• `/remember Mom\'s birthday is March 15`\n' +
-        '• `/remember John Smith is my manager at Acme Corp`\n' +
-        '• `/remember I want to learn Rust this year`',
+        '• `/remember I feel drained after long meetings`\n' +
+        '• `/remember I want to learn Rust this year`\n' +
+        '• `/remember Morning is my most productive time`',
         { parse_mode: 'Markdown' }
       );
       return;
@@ -557,8 +557,8 @@ export class TelegramHandler {
     await ctx.reply('Analyzing what you want to remember...');
 
     try {
-      // Categorize the fact using LLM
-      const categorization = await this.llm.categorizeFact(fact);
+      // Categorize as thought using LLM
+      const thought = await this.llm.categorizeAsThought(fact);
 
       // Generate unique ID for this pending remember
       const uniqueId = `${userId}_${Date.now()}`;
@@ -567,14 +567,14 @@ export class TelegramHandler {
       this.pendingRemember.set(uniqueId, {
         userId,
         fact,
-        categorization,
+        thought,
         createdAt: new Date(),
       });
 
       // Create inline keyboard with confirm/change options
       const keyboard = Markup.inlineKeyboard([
         [
-          Markup.button.callback(`✅ ${this.formatEntryType(categorization.type)}`, `remember_confirm:${uniqueId}`),
+          Markup.button.callback(`✅ ${this.formatThoughtKind(thought.kind)}`, `remember_confirm:${uniqueId}`),
           Markup.button.callback('🔄 Change', `remember_change:${uniqueId}`),
         ],
         [
@@ -584,14 +584,15 @@ export class TelegramHandler {
 
       await ctx.reply(
         `📝 *I'll remember this as:*\n\n` +
-        `*Type:* ${this.formatEntryType(categorization.type)}\n` +
-        `*Summary:* ${categorization.summary}\n` +
-        `*Tags:* ${categorization.tags.join(', ')}\n\n` +
+        `*Kind:* ${this.formatThoughtKind(thought.kind)}\n` +
+        `*Domain:* ${thought.domain}\n` +
+        `*Claim:* ${thought.claim}\n` +
+        `*Tags:* ${thought.tags.join(', ')}\n\n` +
         `Is this correct?`,
         { parse_mode: 'Markdown', ...keyboard }
       );
     } catch (error) {
-      console.error('Failed to categorize fact:', error);
+      console.error('Failed to categorize as thought:', error);
       await ctx.reply('Sorry, I could not process that. Please try again.');
     }
   }
@@ -622,19 +623,20 @@ export class TelegramHandler {
     await ctx.answerCbQuery('Saving...');
 
     try {
-      // Generate embedding
-      const embeddingText = `${pending.categorization.summary} ${pending.categorization.tags.join(' ')}`;
+      // Generate embedding from the claim and tags
+      const embeddingText = `${pending.thought.claim} ${pending.thought.tags.join(' ')}`;
       const embedding = await this.openai.generateEmbedding(embeddingText);
 
-      // Save to knowledge base
-      await this.knowledgeRepo.save({
+      // Save as thought
+      await this.thoughtRepo.save({
         userId: pending.userId,
-        type: pending.categorization.type as RememberEntryType,
-        problem: pending.categorization.summary,
-        solution: pending.fact, // Store original fact as solution
-        context: null,
-        learnings: [],
-        tags: pending.categorization.tags,
+        kind: pending.thought.kind,
+        domain: pending.thought.domain,
+        claim: pending.thought.claim,
+        stance: pending.thought.stance,
+        confidence: pending.thought.confidence,
+        context: pending.thought.context,
+        tags: pending.thought.tags,
         embedding,
       });
 
@@ -643,14 +645,14 @@ export class TelegramHandler {
 
       await ctx.editMessageText(
         `✅ *Saved!*\n\n` +
-        `*Type:* ${this.formatEntryType(pending.categorization.type)}\n` +
-        `*Summary:* ${pending.categorization.summary}\n` +
-        `*Tags:* ${pending.categorization.tags.join(', ')}\n\n` +
-        `Use /recall to search your knowledge later.`,
+        `*Kind:* ${this.formatThoughtKind(pending.thought.kind)}\n` +
+        `*Claim:* ${pending.thought.claim}\n` +
+        `*Tags:* ${pending.thought.tags.join(', ')}\n\n` +
+        `Use /recall to search your thoughts later.`,
         { parse_mode: 'Markdown' }
       );
     } catch (error) {
-      console.error('Failed to save remembered fact:', error);
+      console.error('Failed to save thought:', error);
       await ctx.editMessageText('Failed to save. Please try /remember again.');
       this.pendingRemember.delete(uniqueId);
     }
@@ -681,20 +683,20 @@ export class TelegramHandler {
 
     await ctx.answerCbQuery();
 
-    // Show category picker
-    const categories: RememberEntryType[] = ['fact', 'preference', 'event', 'relationship', 'goal'];
+    // Show kind picker (subset for /remember)
+    const kinds: ThoughtKind[] = ['fact', 'preference', 'feeling', 'goal', 'observation'];
     const keyboard = Markup.inlineKeyboard([
-      categories.slice(0, 3).map(type => 
-        Markup.button.callback(this.formatEntryType(type), `remember_type:${uniqueId}:${type}`)
+      kinds.slice(0, 3).map(kind =>
+        Markup.button.callback(this.formatThoughtKind(kind), `remember_type:${uniqueId}:${kind}`)
       ),
-      categories.slice(3).map(type => 
-        Markup.button.callback(this.formatEntryType(type), `remember_type:${uniqueId}:${type}`)
+      kinds.slice(3).map(kind =>
+        Markup.button.callback(this.formatThoughtKind(kind), `remember_type:${uniqueId}:${kind}`)
       ),
       [Markup.button.callback('❌ Cancel', `remember_cancel:${uniqueId}`)],
     ]);
 
     await ctx.editMessageText(
-      `📝 *Select the correct category:*\n\n` +
+      `📝 *Select the correct kind:*\n\n` +
       `*Original:* ${pending.fact}`,
       { parse_mode: 'Markdown', ...keyboard }
     );
@@ -708,7 +710,7 @@ export class TelegramHandler {
     }
 
     const uniqueId = match[1];
-    const newType = match[2] as RememberEntryType;
+    const newKind = match[2] as ThoughtKind;
     const pending = this.pendingRemember.get(uniqueId);
 
     if (!pending) {
@@ -724,26 +726,27 @@ export class TelegramHandler {
       return;
     }
 
-    // Update the type
-    pending.categorization.type = newType;
+    // Update the kind
+    pending.thought.kind = newKind;
     this.pendingRemember.set(uniqueId, pending);
 
     await ctx.answerCbQuery('Saving...');
 
     try {
       // Generate embedding
-      const embeddingText = `${pending.categorization.summary} ${pending.categorization.tags.join(' ')}`;
+      const embeddingText = `${pending.thought.claim} ${pending.thought.tags.join(' ')}`;
       const embedding = await this.openai.generateEmbedding(embeddingText);
 
-      // Save to knowledge base
-      await this.knowledgeRepo.save({
+      // Save as thought
+      await this.thoughtRepo.save({
         userId: pending.userId,
-        type: newType,
-        problem: pending.categorization.summary,
-        solution: pending.fact,
-        context: null,
-        learnings: [],
-        tags: pending.categorization.tags,
+        kind: newKind,
+        domain: pending.thought.domain,
+        claim: pending.thought.claim,
+        stance: pending.thought.stance,
+        confidence: pending.thought.confidence,
+        context: pending.thought.context,
+        tags: pending.thought.tags,
         embedding,
       });
 
@@ -752,14 +755,14 @@ export class TelegramHandler {
 
       await ctx.editMessageText(
         `✅ *Saved!*\n\n` +
-        `*Type:* ${this.formatEntryType(newType)}\n` +
-        `*Summary:* ${pending.categorization.summary}\n` +
-        `*Tags:* ${pending.categorization.tags.join(', ')}\n\n` +
-        `Use /recall to search your knowledge later.`,
+        `*Kind:* ${this.formatThoughtKind(newKind)}\n` +
+        `*Claim:* ${pending.thought.claim}\n` +
+        `*Tags:* ${pending.thought.tags.join(', ')}\n\n` +
+        `Use /recall to search your thoughts later.`,
         { parse_mode: 'Markdown' }
       );
     } catch (error) {
-      console.error('Failed to save remembered fact:', error);
+      console.error('Failed to save thought:', error);
       await ctx.editMessageText('Failed to save. Please try /remember again.');
       this.pendingRemember.delete(uniqueId);
     }
@@ -874,52 +877,70 @@ export class TelegramHandler {
       throw new Error('No active conversation');
     }
 
-    let knowledgeEntry = null;
+    let savedThoughts: any[] = [];
 
     try {
-      // Step 1: Extract knowledge using LLM
-      const extracted = await this.llm.extractKnowledge(messages);
-      console.log(`Knowledge extracted for conversation ${conversationId}`);
+      // Step 1: Extract thoughts using LLM
+      const result = await this.llm.extractThoughts(messages);
+      console.log(`Extracted ${result.thoughts.length} thought(s) from conversation ${conversationId}`);
 
-      // Step 2: Generate embedding
-      const embeddingText = `${extracted.problem} ${extracted.context} ${extracted.solution} ${extracted.learnings.join(' ')}`;
-      const embedding = await this.openai.generateEmbedding(embeddingText);
-      console.log(`Embedding generated for conversation ${conversationId}`);
-
-      // Step 3: Save knowledge entry
-      knowledgeEntry = await this.knowledgeRepo.save({
-        conversationId,
+      // Step 2: Create source from conversation transcript
+      const transcript = messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
+      const source = await this.sourceRepo.createFromConversation(
         userId,
-        type: extracted.type,
-        problem: extracted.problem,
-        context: extracted.context,
-        solution: extracted.solution,
-        learnings: extracted.learnings,
-        tags: extracted.tags,
-        embedding,
-      });
-      console.log(`Knowledge entry saved: ${knowledgeEntry.id}`);
+        transcript,
+        `Conversation ${new Date().toISOString().split('T')[0]}`
+      );
+      console.log(`Source created: ${source.id}`);
 
-      // Step 4: Update conversation status (only after knowledge is saved)
+      // Step 3: Save each thought with embedding
+      for (const thought of result.thoughts) {
+        // Generate embedding for the thought
+        const embeddingText = `${thought.claim} ${thought.context || ''} ${thought.tags.join(' ')}`;
+        const embedding = await this.openai.generateEmbedding(embeddingText);
+
+        // Save thought
+        const savedThought = await this.thoughtRepo.save({
+          userId,
+          kind: thought.kind,
+          domain: thought.domain,
+          claim: thought.claim,
+          stance: thought.stance,
+          confidence: thought.confidence,
+          context: thought.context,
+          evidence: thought.evidence,
+          examples: thought.examples,
+          actionables: thought.actionables,
+          tags: thought.tags,
+          embedding,
+        });
+
+        // Link thought to source
+        await this.thoughtRepo.linkToSource(savedThought.id, source.id);
+
+        savedThoughts.push(savedThought);
+        console.log(`Thought saved: ${savedThought.id} (${thought.kind})`);
+      }
+
+      // Step 4: Update conversation status
       await this.conversationRepo.update(conversationId, {
         status: 'extracted',
       });
       console.log(`Conversation ${conversationId} marked as extracted`);
 
-      // Step 5: End conversation (only after everything succeeded)
+      // Step 5: End conversation
       this.conversationState.endConversation(userId);
       console.log(`Conversation ended for user ${userId}`);
-      
+
     } catch (error) {
       // Log the failure stage
-      if (!knowledgeEntry) {
-        console.error('Extraction failed before saving knowledge entry:', error);
+      if (savedThoughts.length === 0) {
+        console.error('Extraction failed before saving thoughts:', error);
       } else {
-        console.error('Extraction succeeded but failed to update conversation status:', error);
+        console.error(`Extraction partially succeeded (${savedThoughts.length} thoughts saved):`, error);
       }
-      
+
       // Keep conversation active so user can retry
-      // Do NOT call endConversation() here
       throw error;
     }
   }

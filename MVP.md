@@ -58,6 +58,14 @@ An active knowledge extraction assistant that lives in a chat platform, mirrors 
 
 ## Data Model
 
+This project uses the **Thought Model v1** schema:
+
+- **Primary schema (Thought Model v1):** Append-only `thoughts` linked to raw `sources`, with Supabase for storage and vector search.
+- **Legacy schema (Phase 1 / Phase 2A):** `conversations` and `knowledge_entries` tables (being migrated).
+- **Future:** Markdown vault as human-readable source of truth for portability.
+
+### Legacy schema (Phase 1 / Phase 2A) - Being Migrated
+
 ```sql
 -- Conversations table
 CREATE TABLE conversations (
@@ -71,7 +79,7 @@ CREATE TABLE conversations (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Knowledge entries extracted from conversations
+-- Knowledge entries extracted from conversations (legacy model)
 CREATE TABLE knowledge_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID REFERENCES conversations(id),
@@ -99,6 +107,189 @@ CREATE TABLE activity_signals (
 -- Enable vector similarity search
 CREATE INDEX ON knowledge_entries USING ivfflat (embedding vector_cosine_ops);
 ```
+
+### Primary schema (Thought Model v1) - Active
+
+Notes:
+- Thoughts are **append-only**. Updates create a new thought that supersedes the old one.
+- Sources preserve full fidelity (raw transcript/article text) while thoughts stay short and composable.
+- Code implementation complete; SQL migration pending.
+
+```sql
+-- Sources are raw inputs (conversation transcript, article text, research notes)
+CREATE TABLE sources (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT,
+    type TEXT NOT NULL, -- conversation | article | research | manual
+    title TEXT,
+    raw TEXT NOT NULL,
+    summary TEXT,
+    url TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    captured_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Thoughts are atomic, standalone claims derived from sources
+CREATE TABLE thoughts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT,
+
+    kind TEXT NOT NULL, -- principle | heuristic | decision | lesson | observation | prediction | preference | fact | feeling | goal
+    domain TEXT NOT NULL, -- personal | professional | mixed
+    privacy TEXT DEFAULT 'private', -- private | sensitive | shareable
+
+    claim TEXT NOT NULL,
+    stance TEXT NOT NULL, -- believe | tentative | question | rejected
+    confidence FLOAT,
+
+    context TEXT,
+    evidence TEXT[],
+    examples TEXT[],
+    actionables TEXT[],
+
+    tags TEXT[],
+
+    supersedes_id UUID REFERENCES thoughts(id),
+    superseded_by_id UUID REFERENCES thoughts(id),
+    related_ids UUID[],
+
+    embedding VECTOR(1536),
+
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Many thoughts can be backed by many sources (with optional quoted snippet)
+CREATE TABLE thought_sources (
+    thought_id UUID REFERENCES thoughts(id) ON DELETE CASCADE,
+    source_id UUID REFERENCES sources(id) ON DELETE CASCADE,
+    quoted TEXT,
+    PRIMARY KEY (thought_id, source_id)
+);
+
+-- Optional: search index for thoughts
+CREATE INDEX ON thoughts USING ivfflat (embedding vector_cosine_ops);
+```
+
+The Markdown vault mirrors the target schema:
+- Each thought is written to `vault/thoughts/`
+- Each source is written to `vault/sources/`
+- Superseding a thought creates a new file; older versions remain
+
+#### Migration Status (Phase 2.5)
+
+**Status:** Schema migrated, deployment pending
+
+The migration from the legacy model to Thought Model v1:
+
+- `conversations` → `sources` where `type = 'conversation'`
+- `knowledge_entries` → `thoughts` (type → kind mapping below)
+
+**Completed:**
+- ✅ Updated `/extract` to create sources + thoughts
+- ✅ Updated `/remember` to create thoughts
+- ✅ Updated `/recall` to query thoughts table
+- ✅ SQL migration script executed (`scripts/phase-2.5-thought-model.sql`)
+- ✅ Existing data migrated (11 conversations → sources, 4 knowledge_entries → thoughts)
+
+**Pending:**
+- Deploy updated code to Railway
+- Test end-to-end flow
+
+Legacy `knowledge_entries.type` → Thought `kind` mapping:
+
+| Legacy `type` | Thought `kind` |
+|--------------|----------------|
+| `problem_solution` | `heuristic` (or `lesson` if reflective) |
+| `insight` | `observation` |
+| `decision` | `decision` |
+| `learning` | `lesson` |
+| `fact` | `fact` |
+| `preference` | `preference` |
+| `event` | `fact` (with date in claim/context) |
+| `relationship` | `fact` (person-centric; often `context`-heavy) |
+| `goal` | `goal` |
+| `article_summary` | `observation` (plus store the article as a `source`) |
+| `research` | `observation` (plus store the research bundle as a `source`) |
+
+Implementation:
+- Clean cutover to new schema (no dual-write)
+- SQL migration handles data migration
+- Legacy tables will be archived after verification
+
+---
+
+## Thought Model (v1)
+
+The core atomic unit of knowledge in this system is a **thought**.
+
+A **thought** is the smallest durable knowledge object that is:
+- Independently retrievable (stands alone in recall results)
+- Composable (multiple thoughts can be assembled into frameworks, posts, talks)
+- Traceable (links back to sources like conversations/articles)
+- Append-only (never edited; only superseded by new versions)
+
+### Definition
+
+A **thought** is a single user-authored claim (or decision/observation/etc.) with optional compact context and traceable sources.
+
+Practical constraint: `claim` should be 1–2 sentences and readable without the original transcript.
+
+### Why “thoughts” (not just raw notes)
+
+- **Framework-driven synthesis** works best on clean, standalone claims.
+- **Context is preserved** via linked sources (raw transcript/article text) without bloating the thought itself.
+- **History matters**: thoughts evolve. We keep a revision chain rather than overwriting.
+
+### Thought v1 fields (recommended)
+
+Required:
+- `id` (UUID)
+- `created_at`, `updated_at`
+- `kind` (enum): `principle | heuristic | decision | lesson | observation | prediction | preference | fact | feeling | goal`
+- `domain` (enum): `personal | professional | mixed`
+- `claim` (string; 1–2 sentences; standalone)
+- `stance` (enum): `believe | tentative | question | rejected`
+- `tags` (string[])
+- `sources` (array): `{ type: conversation | article | research | manual, ref: string, url?: string }`
+
+Strongly recommended:
+- `context` (string; short bullets; “when/where this applies”)
+- `evidence` (string[]; bullets)
+- `examples` (string[]; bullets)
+- `actionables` (string[]; bullets)
+- `confidence` (0–1)
+- `privacy` (enum): `private | sensitive | shareable`
+- `supersedes_id` (UUID | null)
+- `superseded_by_id` (UUID | null) — convenience pointer
+- `related_ids` (UUID[]) — for clustering into frameworks
+
+### Append-only revision rule
+
+Thoughts are immutable. Any change creates a new thought that supersedes the old one:
+- New thought sets `supersedes_id`
+- Old thought sets `superseded_by_id`
+- Retrieval defaults to the latest version unless history is requested
+
+### Source model (to preserve full context)
+
+To avoid losing richness (especially for story context), store **sources** separately from thoughts:
+
+- `Source` types: `conversation | article | research | manual`
+- Fields: `id`, `type`, `captured_at`, `title`, `raw`, optional `summary`, optional `metadata` (url, author, chat id, etc.)
+
+A conversation/article can yield **1–N thoughts**.
+
+### Markdown / Obsidian support (early)
+
+To avoid vendor lock-in and improve glanceability, persist thoughts and sources as Markdown files (Obsidian-friendly) early:
+
+- `vault/thoughts/YYYY/MM/<id>-<slug>.md`
+- `vault/sources/YYYY/MM/<source-id>-<slug>.md`
+
+Supabase remains useful as an indexing/search backend initially, but Markdown files provide portability and human-readable browsing.
 
 ---
 
@@ -303,6 +494,74 @@ The [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-and-tools/claud
 
 **Key insight:** The SDK handles the entire tool execution loop autonomously - exactly what we built manually in 1500+ lines of code.
 
+**Limitation discovered:** Claude Agent SDK is **Claude-only** and requires **API credits** (not Pro/Max subscription). No support for OpenRouter, OpenAI, or other providers.
+
+#### 5. Clawdbot Codebase Analysis
+
+We obtained access to the [Clawdbot](https://github.com/nicosql/clawdbot) codebase (MIT licensed) and conducted a deep analysis:
+
+| Aspect | Finding |
+|--------|---------|
+| **Stack** | TypeScript, Node 22+, pnpm monorepo, ~100K LOC |
+| **License** | MIT - fully permissive |
+| **Architecture** | Monolithic gateway, custom WebSocket protocol |
+| **Agent Framework** | [pi-agent](https://www.npmjs.com/package/@mariozechner/pi-ai) by Mario Zechner |
+| **Multi-channel** | Telegram, WhatsApp, Discord, iMessage, Signal, WebChat |
+| **Knowledge** | External skills (QMD, Obsidian) - loosely coupled |
+| **Skills** | 47 bundled CLI wrappers with SKILL.md metadata |
+| **Generalizability** | ~80% reusable, ~20% macOS/Peter-specific |
+
+**Key insight:** Clawdbot is a general-purpose AI assistant with excellent multi-channel routing. However, it does NOT have built-in knowledge extraction workflows - that's our unique value proposition.
+
+#### 6. Pi-Agent vs Claude Agent SDK
+
+Critical discovery: Clawdbot uses **pi-agent**, which supports multiple model providers unlike Claude Agent SDK.
+
+| Aspect | Pi-Agent (Clawdbot uses) | Claude Agent SDK |
+|--------|--------------------------|------------------|
+| **Model Providers** | ✅ Multi: Anthropic, OpenAI, Google, OpenRouter, Groq, Cerebras, xAI, Ollama | ❌ Claude only |
+| **Pricing Flexibility** | ✅ Use OpenRouter free models, any provider | ❌ Claude API credits only |
+| **Pro/Max Subscription** | ❌ No (API-based) | ❌ No (API-based) |
+| **Built-in Tools** | ❌ None - you build or use skills | ✅ Read, Write, Edit, Glob, Grep, WebSearch |
+| **MCP Support** | ❌ Custom protocol | ✅ Native MCP |
+| **Cross-provider Handoff** | ✅ Can switch models mid-conversation | ❌ N/A (single provider) |
+| **Tool Calling** | ✅ TypeBox schemas | ✅ Native |
+
+**Sources:**
+- [Pi-Agent Blog Post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)
+- [@mariozechner/pi-ai on npm](https://www.npmjs.com/package/@mariozechner/pi-ai)
+
+#### 7. Core Value Proposition Clarification
+
+Through this research, we clarified what we're actually building:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│           OUR UNIQUE VALUE (Second Brain)               │
+│                                                          │
+│  • Conversational knowledge extraction                  │
+│  • Structured capture (problem/solution/learnings)      │
+│  • Semantic recall of YOUR experiences                  │
+│  • Profile building → Content synthesis                 │
+│  • Knowledge decay, contradiction detection             │
+│  • "What do I uniquely know about X?"                   │
+└─────────────────────────────────────────────────────────┘
+                         ▲
+                         │ Built on top of
+                         │
+┌─────────────────────────────────────────────────────────┐
+│           COMMODITY LAYER (AI Agent + Tools)            │
+│                                                          │
+│  Options:                                               │
+│  • Claude Agent SDK (best DX, locked to Claude)        │
+│  • Pi-Agent (model flexibility, more setup)            │
+│  • Clawdbot fork (47 skills, but 100K LOC)             │
+│  • Current custom approach (full control, most work)   │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Key insight:** Clawdbot, Claude Agent SDK, and similar tools solve the "AI agent with tools" layer. Our unique value is the **knowledge extraction and synthesis workflow** on top - that doesn't exist elsewhere.
+
 ### Comparative Analysis
 
 #### What We Got Right
@@ -331,26 +590,109 @@ The [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-and-tools/claud
 | **Knowledge portability** | ❌ Locked in DB | ✅ Git-versioned | ✅ If using files |
 | **Built-in tools** | None | Full suite | Full suite + custom MCP |
 
-### The Decision: Hybrid Migration to Agent SDK
+### Decision Status: RESOLVED (January 5, 2026)
 
-**Decision Date:** January 4, 2026
+**Decision:** Move forward with **Claude Agent SDK** for agentic capabilities.
 
-**Choice:** Hybrid migration - keep current bot running while building Agent SDK version in parallel.
+**Rationale:**
+- Velocity > model flexibility (for now)
+- Daily usage is expected to be moderate; budget around **~$1/day** token costs
 
-**Reasoning:**
+**Storage decision:** Implement **Markdown/Obsidian-compatible storage** for portability (deferred to after Phase 2.5 core migration).
 
-1. **Risk mitigation:** Current bot is working and deployed. Don't break what works.
-2. **Incremental validation:** Test SDK on new features before touching working code.
-3. **TypeScript compatibility:** SDK available in TypeScript, can reuse existing code.
-4. **Best of both worlds:** Keep Telegram (mobile), add SDK power (agentic reasoning).
-5. **Storage flexibility:** Can experiment with markdown files vs. database during migration.
-6. **Easy rollback:** If SDK has issues, fall back to direct implementation.
+**Fallback plan:** If Claude costs become painful, migrate to pi-agent later while keeping the same thought/source storage model.
 
-**What changes:**
-- New features (Phase 2B, 2C, 4) built with Agent SDK
-- Existing services wrapped as MCP servers
-- Gradual migration of existing features once SDK is proven
-- Option to add markdown file storage alongside or instead of Supabase
+**Current Phase 2.5 Status:**
+- ✅ Thought Model v1 schema implemented
+- ✅ Code updated for new schema
+- ✅ SQL migration complete
+- 🚧 Deployment pending
+- ⏳ Claude Agent SDK integration (Phase 2.5b - after core migration verified)
+
+---
+
+### Architecture Options Considered
+
+<details>
+<summary>Click to expand architecture options analysis</summary>
+
+#### Option A: Claude Agent SDK (CHOSEN)
+```
+Pros:
++ Best developer experience
++ Built-in tools (Read, Write, Grep, WebSearch, etc.)
++ Native MCP support
++ Same capabilities as Claude Code CLI
+
+Cons:
+- Claude-only (no OpenRouter, no GPT-4, no local models)
+- Requires API credits (can't use Pro/Max subscription)
+- Higher cost for heavy usage
+- Vendor lock-in
+```
+
+#### Option B: Pi-Agent (fresh build)
+```
+Pros:
++ Multi-provider (Anthropic, OpenAI, Google, OpenRouter, Ollama, etc.)
++ Cost flexibility (use free/cheap models via OpenRouter)
++ Cross-provider context handoff
++ Battle-tested (powers Clawdbot)
+
+Cons:
+- No built-in tools (need to build or port)
+- More setup work
+- Custom protocol (not MCP)
+```
+
+#### Option C: Fork Clawdbot
+```
+Pros:
++ 47 skills ready to use
++ Multi-channel already built (Telegram, WhatsApp, Discord, etc.)
++ Pi-agent foundation (model flexibility)
++ Production-grade, MIT licensed
+
+Cons:
+- ~100K LOC to understand and maintain
+- 20% macOS/Peter-specific code to remove
+- Monolithic architecture
+- No knowledge extraction workflow (our unique value)
+```
+
+#### Option D: Continue Current Approach
+```
+Pros:
++ Already working and deployed
++ Full control over architecture
++ Uses OpenRouter (model flexibility)
++ Smallest codebase (~2K LOC)
+
+Cons:
+- No agentic reasoning (single LLM calls)
+- Manual tool orchestration
+- More work for new features
+```
+
+#### Comparison Matrix
+
+| Factor | Claude SDK | Pi-Agent | Clawdbot Fork | Current |
+|--------|-----------|----------|---------------|---------|
+| Model flexibility | ❌ | ✅ | ✅ | ✅ |
+| Built-in tools | ✅ | ❌ | ⚠️ Skills | ❌ |
+| Setup effort | Low | Medium | High | Done |
+| Maintenance | Low | Medium | High | Medium |
+| Cost control | ❌ | ✅ | ✅ | ✅ |
+| Agentic reasoning | ✅ | ✅ | ✅ | ❌ |
+| Our unique value | Build on top | Build on top | Build on top | Built-in |
+
+#### Key Question Resolved
+
+> **Is model flexibility worth giving up Claude Agent SDK's built-in tools?**
+
+**Answer:** No, for now. Velocity is the priority. Claude Agent SDK chosen.
+
+</details>
 
 ### Target Architecture (Post-Migration)
 
@@ -407,10 +749,11 @@ src/
 
 **Migration Order:**
 1. Build SDK foundation with MCP wrappers for existing services
-2. Build new features (Phase 2B `/read`, Phase 2C `/research`) with SDK
-3. Validate SDK approach works well
-4. Gradually migrate existing features (`/recall`, `/remember`)
-5. Optionally add markdown file storage
+2. Add Markdown vault persistence for thoughts + sources (Obsidian-friendly)
+3. Build new features (Phase 2B `/read`, Phase 2C `/research`) with SDK
+4. Validate SDK approach works well
+5. Gradually migrate existing features (`/recall`, `/remember`)
+6. Keep Supabase as optional index/search backend
 
 ---
 
@@ -484,52 +827,46 @@ src/
 - [x] Category confirmation with correction option
 - [ ] Decay weight in retrieval scoring (deferred)
 
-### Phase 2.5: Agent SDK Migration 🔄 **IN PROGRESS**
-**Goal:** Introduce Claude Agent SDK for more powerful agentic capabilities
+### Phase 2.5: Foundation Migration 🚧 **IN PROGRESS**
+**Goal:** Migrate to Thought Model v1 for better knowledge structure
 
-**Decision documented:** See "Architectural Research & Evolution" section above.
+**Status:** Schema migrated, deployment pending
 
-#### Step 1: SDK Foundation
-- [ ] Install `@anthropic-ai/claude-agent-sdk`
-- [ ] Create `src/agent/` directory structure
-- [ ] Basic SDK client setup with session management
-- [ ] Test simple query/response flow
+**Decision (Jan 5, 2026):** Claude Agent SDK chosen for velocity. ~$1/day token budget.
 
-#### Step 2: MCP Server Wrappers
-- [ ] Create `telegram.mcp.ts` - wrap existing Telegram send/receive
-- [ ] Create `knowledge.mcp.ts` - wrap Supabase search/store operations
-- [ ] Register MCP servers with SDK client
-- [ ] Test tool invocation through SDK
+**Completed:**
+- [x] Thought Model v1 types and interfaces
+- [x] New extraction prompt (multi-thought output)
+- [x] New categorization prompt for `/remember`
+- [x] ThoughtRepository and SourceRepository
+- [x] SupabaseService methods for thoughts/sources
+- [x] Updated `/extract`, `/remember`, `/recall` handlers
+- [x] SQL migration executed in Supabase
+- [x] Existing data migrated
 
-#### Step 3: Build New Features with SDK
-- [ ] `/read [url]` - use SDK's WebFetch + custom extraction
-- [ ] `/research [topic]` - use SDK's WebSearch + multi-step synthesis
-- [ ] Validate agentic reasoning improves these features
+**Pending:**
+- [ ] Deploy to Railway
+- [ ] Test end-to-end
+- [ ] Implement Markdown vault persistence (deferred)
 
-#### Step 4: Gradual Migration (Optional)
-- [ ] Route `/recall` through SDK (compare quality)
-- [ ] Route `/remember` through SDK (compare quality)
-- [ ] Evaluate: keep dual-path or fully migrate?
+### Phase 2B: Article Ingestion
+**Goal:** Ingest and summarize web articles
+**Implementation:** Claude Agent SDK with WebFetch
 
-#### Step 5: Storage Evolution (Optional)
-- [ ] Experiment with markdown file storage
-- [ ] Add Git integration for version control
-- [ ] Evaluate hybrid: files as source, DB for vector search
-
-**Status:** 🟡 **PLANNED - Starting after research phase**
-
-### Phase 2B: Article Ingestion (via Agent SDK)
-- [ ] `/read [url]` command (built with SDK)
-- [ ] SDK's WebFetch for content extraction
-- [ ] LLM summarization with agentic reasoning
-- [ ] Store as `article_summary` type via knowledge MCP
+- [ ] `/read [url]` command
+- [ ] Web page fetching and content extraction
+- [ ] LLM summarization of article content
+- [ ] Store as `observation` thought with article as `source`
 - [ ] Handle common article formats (blogs, docs, news)
 
-### Phase 2C: Web Research (via Agent SDK)
-- [ ] `/research [topic]` command (built with SDK)
-- [ ] SDK's WebSearch for discovery
+### Phase 2C: Web Research
+**Goal:** Research topics and compile findings
+**Implementation:** Claude Agent SDK with WebSearch + WebFetch
+
+- [ ] `/research [topic]` command
+- [ ] Web search integration (SDK WebSearch or Google Custom Search)
 - [ ] Multi-step: search → fetch top results → synthesize
-- [ ] Auto-save as `research` type via knowledge MCP
+- [ ] Auto-save as `observation` thought with research as `source`
 - [ ] Source attribution in stored entry
 
 ### Phase 3: Profile Building

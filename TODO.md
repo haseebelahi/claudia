@@ -63,11 +63,48 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 ---
 
-## Phase 2: Retrieval & Recall 🚧
+## Phase 2.5: Foundation Migration 🚧
+
+**Goal:** Migrate to Thought Model v1 + Claude Agent SDK for agentic capabilities
+
+**Status:** In Progress - Deploy & Test
+
+**Decision (Jan 5, 2026):** Claude Agent SDK chosen for velocity. ~$1/day token budget acceptable.
+
+### Schema Migration
+- [x] Design new extraction prompt (Thought Model v1 output format)
+- [x] Create `sources` table SQL (in scripts/phase-2.5-thought-model.sql)
+- [x] Create `thoughts` table SQL (in scripts/phase-2.5-thought-model.sql)
+- [x] Create `thought_sources` junction table SQL (in scripts/phase-2.5-thought-model.sql)
+- [x] Run SQL migration in Supabase ✅
+- [ ] Implement Markdown vault writer (`vault/thoughts/`, `vault/sources/`)
+- [x] Update `extractAndSave()` to write new schema (clean cutover)
+- [x] Update `/remember` to create thoughts instead of knowledge_entries
+- [x] Update `/recall` to query thoughts table
+- [x] Migration script: existing conversations → sources (in SQL)
+- [x] Migration script: existing knowledge_entries → thoughts (in SQL)
+
+### Claude Agent SDK Integration
+- [ ] Install `@anthropic-ai/claude-agent-sdk`
+- [ ] Create MCP wrapper for Telegram handler
+- [ ] Create MCP wrapper for knowledge service
+- [ ] Update system prompts for agent mode
+- [ ] Build `/read [url]` with SDK's WebFetch
+- [ ] Build `/research [topic]` with SDK's WebSearch
+
+### Markdown Vault
+- [ ] Define vault directory structure
+- [ ] Implement thought → markdown serializer
+- [ ] Implement source → markdown serializer
+- [ ] Git integration for version control (optional)
+
+---
+
+## Phase 2: Retrieval & Recall ✅
 
 **Goal:** Search and retrieve past knowledge
 
-**Status:** Phase 2A complete, Phase 2B/C pending
+**Status:** Phase 2A complete, Phase 2B/C moved to Phase 2.5
 
 ### Phase 2A: Retrieval & Quick Storage ✅
 - [x] `/recall [topic]` command for semantic search
@@ -293,23 +330,30 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 
 ---
 
-## Current Sprint (Next 2 Weeks)
+## Current Sprint: Phase 2.5 Foundation Migration
 
-### Priority 1: Phase 2A - Retrieval & Quick Storage ✅
-- [x] Implement `/recall [topic]` command
-- [x] Implement `/remember [fact]` command
-- [x] Test with existing knowledge entries
-- [x] Document usage in USAGE.md
+### Priority 1: Prompt & Schema Design ✅
+- [x] Design new EXTRACTION prompt (Thought Model v1 output)
+- [x] Design new CONVERSATION prompt (surgical question flow)
+- [x] Finalize thought kinds and mapping from legacy types
+- [x] Document prompt design decisions (in SYSTEM_PROMPTS.md)
 
-### Priority 2: Phase 2B - Article Ingestion
-- [ ] Implement `/read [url]` command
-- [ ] Add article content extraction
-- [ ] Test with various article formats
+### Priority 2: Database Schema ✅
+- [x] Create `sources`, `thoughts`, `thought_sources` SQL (scripts/phase-2.5-thought-model.sql)
+- [x] Create vector search function for thoughts (match_thoughts)
+- [x] Run SQL migration in Supabase ✅
+- [x] Migrate existing data (11 conversations → sources, 4 knowledge_entries → thoughts)
 
-### Priority 3: Phase 2C - Web Research
-- [ ] Set up Google Custom Search API
-- [ ] Implement `/research [topic]` command
-- [ ] Auto-save research to knowledge base
+### Priority 3: Code Implementation ✅
+- [x] Update extraction to write thoughts + sources
+- [x] Update /remember to write thoughts
+- [x] Update /recall to query thoughts table
+- [ ] Implement Markdown vault persistence (deferred)
+
+### Priority 4: Deploy & Test ← CURRENT
+- [ ] Deploy updated code to Railway
+- [ ] Verify end-to-end flow works
+- [ ] Test /remember, /recall, /extract with new schema
 
 ---
 
@@ -348,12 +392,13 @@ Current status and implementation roadmap for the Personal Knowledge Assistant.
 |---------|------|-----------|
 | 0.1.0 | 2026-01-01 | Phase 1 complete - Core extraction working |
 | 0.2.0 | 2026-01-02 | Phase 2A complete - /recall and /remember commands |
-| 0.3.0 | TBD | Phase 2B/C - Article ingestion and web research |
-| 0.4.0 | TBD | Phase 3 - Profile building |
+| 0.3.0 | TBD | Phase 2.5 - Thought Model v1 + Claude Agent SDK |
+| 0.4.0 | TBD | Phase 2B/C - /read and /research commands |
+| 0.5.0 | TBD | Phase 3 - Profile building |
 | 1.0.0 | TBD | Phases 1-4 complete, production-ready |
 
 ---
 
-**Last Updated:** January 2, 2026  
-**Current Phase:** Phase 2A Complete ✅ → Phase 2B Starting 🚧  
-**Next Milestone:** `/read [url]` command implementation
+**Last Updated:** January 5, 2026
+**Current Phase:** Phase 2.5 Foundation Migration 🚧
+**Next Milestone:** Deploy and test Thought Model v1 end-to-end
