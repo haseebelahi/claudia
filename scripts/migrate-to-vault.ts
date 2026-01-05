@@ -16,7 +16,6 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { createClient } from '@supabase/supabase-js';
-import { Octokit } from '@octokit/rest';
 
 // Types (copied from models to keep script standalone)
 interface Thought {
@@ -59,7 +58,7 @@ interface ThoughtSource {
 }
 
 // Configuration
-const config = {
+const scriptConfig = {
   supabase: {
     url: process.env.SUPABASE_URL!,
     key: process.env.SUPABASE_KEY!,
@@ -73,10 +72,10 @@ const config = {
 // Validate config
 function validateConfig(): boolean {
   const missing: string[] = [];
-  if (!config.supabase.url) missing.push('SUPABASE_URL');
-  if (!config.supabase.key) missing.push('SUPABASE_KEY');
-  if (!config.vault.token) missing.push('GITHUB_VAULT_TOKEN');
-  if (!config.vault.repo) missing.push('GITHUB_VAULT_REPO');
+  if (!scriptConfig.supabase.url) missing.push('SUPABASE_URL');
+  if (!scriptConfig.supabase.key) missing.push('SUPABASE_KEY');
+  if (!scriptConfig.vault.token) missing.push('GITHUB_VAULT_TOKEN');
+  if (!scriptConfig.vault.repo) missing.push('GITHUB_VAULT_REPO');
 
   if (missing.length > 0) {
     console.error('Missing required environment variables:', missing.join(', '));
@@ -85,12 +84,36 @@ function validateConfig(): boolean {
   return true;
 }
 
-// Initialize clients
-const supabase = createClient(config.supabase.url, config.supabase.key);
+// Initialize Supabase client
+const supabase = createClient(scriptConfig.supabase.url, scriptConfig.supabase.key);
 
-function getOctokit(): Octokit | null {
-  if (!config.vault.token || !config.vault.repo) return null;
-  return new Octokit({ auth: config.vault.token });
+// GitHub API helper using fetch
+const GITHUB_API_BASE = 'https://api.github.com';
+
+async function githubRequest(
+  method: string,
+  endpoint: string,
+  body?: Record<string, unknown>
+): Promise<{ status: number; data: unknown }> {
+  const url = `${GITHUB_API_BASE}${endpoint}`;
+  const headers: Record<string, string> = {
+    'Authorization': `token ${scriptConfig.vault.token}`,
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'personal-assistant-vault-migration',
+  };
+
+  if (body) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const data = await response.json().catch(() => ({}));
+  return { status: response.status, data };
 }
 
 // Formatting functions
@@ -246,7 +269,6 @@ function formatSourceMarkdown(source: Source, thoughtIds: string[]): string {
 }
 
 async function commitFile(
-  octokit: Octokit,
   owner: string,
   repo: string,
   path: string,
@@ -254,28 +276,39 @@ async function commitFile(
   message: string
 ): Promise<boolean> {
   try {
+    const endpoint = `/repos/${owner}/${repo}/contents/${path}`;
+    
     // Check if file already exists
     let sha: string | undefined;
-    try {
-      const { data } = await octokit.repos.getContent({ owner, repo, path });
-      if (!Array.isArray(data) && data.type === 'file') {
+    const getResult = await githubRequest('GET', endpoint);
+    
+    if (getResult.status === 200) {
+      const data = getResult.data as { sha?: string; type?: string };
+      if (data.type === 'file' && data.sha) {
         sha = data.sha;
         console.log(`  File exists, will update: ${path}`);
       }
-    } catch (error: unknown) {
-      if ((error as { status?: number }).status !== 404) {
-        throw error;
-      }
+    } else if (getResult.status !== 404) {
+      console.error(`  Unexpected status checking file: ${getResult.status}`);
+      return false;
     }
 
-    await octokit.repos.createOrUpdateFileContents({
-      owner,
-      repo,
-      path,
+    // Create or update the file
+    const body: Record<string, unknown> = {
       message,
       content: Buffer.from(content).toString('base64'),
-      sha,
-    });
+    };
+
+    if (sha) {
+      body.sha = sha;
+    }
+
+    const putResult = await githubRequest('PUT', endpoint, body);
+
+    if (putResult.status !== 200 && putResult.status !== 201) {
+      console.error(`  Failed to commit: ${putResult.status} - ${JSON.stringify(putResult.data)}`);
+      return false;
+    }
 
     return true;
   } catch (error) {
@@ -291,24 +324,18 @@ async function main() {
     process.exit(1);
   }
 
-  const octokit = getOctokit();
-  if (!octokit) {
-    console.error('Failed to initialize Octokit');
-    process.exit(1);
-  }
-
-  const [owner, repo] = config.vault.repo.split('/');
+  const [owner, repo] = scriptConfig.vault.repo.split('/');
   console.log(`Target vault: ${owner}/${repo}\n`);
 
   // Verify repo access
-  try {
-    await octokit.repos.get({ owner, repo });
-    console.log('Vault repository access verified.\n');
-  } catch (error) {
+  const repoCheck = await githubRequest('GET', `/repos/${owner}/${repo}`);
+  if (repoCheck.status !== 200) {
     console.error('Cannot access vault repository. Does it exist?');
+    console.error(`Status: ${repoCheck.status}, Response: ${JSON.stringify(repoCheck.data)}`);
     console.error('Create it at: https://github.com/new');
     process.exit(1);
   }
+  console.log('Vault repository access verified.\n');
 
   // Fetch all data
   console.log('Fetching data from Supabase...');
@@ -372,7 +399,7 @@ async function main() {
     const message = `Add source: ${source.title || source.id.split('-')[0]}`;
 
     console.log(`Writing: ${path}`);
-    const success = await commitFile(octokit, owner, repo, path, content, message);
+    const success = await commitFile(owner, repo, path, content, message);
     if (success) {
       sourcesSuccess++;
     } else {
@@ -397,7 +424,7 @@ async function main() {
     const message = `Add thought: ${generateSlug(thought.claim, 50)}`;
 
     console.log(`Writing: ${path}`);
-    const success = await commitFile(octokit, owner, repo, path, content, message);
+    const success = await commitFile(owner, repo, path, content, message);
     if (success) {
       thoughtsSuccess++;
     } else {

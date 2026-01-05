@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source:*)",
+      "Bash(nvm use stable)",
+      "Bash(npm run build:*)"
+    ]
+  }
+}

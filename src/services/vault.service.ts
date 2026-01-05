@@ -1,19 +1,16 @@
 import { config } from '../config';
 import { Thought, Source } from '../models/knowledge-entry';
 
-// Octokit types - we'll dynamically import the actual module
-type OctokitType = InstanceType<typeof import('@octokit/rest').Octokit>;
-
 interface VaultConfig {
   enabled: boolean;
   owner: string;
   repo: string;
+  token: string;
 }
 
 class VaultService {
   private config: VaultConfig;
-  private octokit: OctokitType | null = null;
-  private octokitPromise: Promise<OctokitType | null> | null = null;
+  private baseUrl = 'https://api.github.com';
 
   constructor() {
     const [owner, repo] = config.vault.githubRepo.split('/');
@@ -22,6 +19,7 @@ class VaultService {
       enabled: config.vault.enabled,
       owner: owner || '',
       repo: repo || '',
+      token: config.vault.githubToken,
     };
 
     if (this.config.enabled) {
@@ -32,32 +30,32 @@ class VaultService {
   }
 
   /**
-   * Lazily initialize Octokit (ESM module requires dynamic import)
+   * Make an authenticated request to GitHub API
    */
-  private async getOctokit(): Promise<OctokitType | null> {
-    if (!this.config.enabled) {
-      return null;
+  private async githubRequest(
+    method: string,
+    endpoint: string,
+    body?: Record<string, unknown>
+  ): Promise<{ status: number; data: unknown }> {
+    const url = `${this.baseUrl}${endpoint}`;
+    const headers: Record<string, string> = {
+      'Authorization': `token ${this.config.token}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'personal-assistant-vault',
+    };
+
+    if (body) {
+      headers['Content-Type'] = 'application/json';
     }
 
-    if (this.octokit) {
-      return this.octokit;
-    }
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
 
-    // Ensure we only import once
-    if (!this.octokitPromise) {
-      this.octokitPromise = (async () => {
-        try {
-          const { Octokit } = await import('@octokit/rest');
-          this.octokit = new Octokit({ auth: config.vault.githubToken });
-          return this.octokit;
-        } catch (error) {
-          console.error('Failed to initialize Octokit:', error);
-          return null;
-        }
-      })();
-    }
-
-    return this.octokitPromise;
+    const data = await response.json().catch(() => ({}));
+    return { status: response.status, data };
   }
 
   /**
@@ -68,17 +66,12 @@ class VaultService {
       return null;
     }
 
-    const octokit = await this.getOctokit();
-    if (!octokit) {
-      return null;
-    }
-
     try {
       const path = this.getThoughtPath(thought);
       const content = this.formatThoughtMarkdown(thought, sourceIds);
       const message = `Add thought: ${this.generateSlug(thought.claim, 50)}`;
 
-      await this.commitFile(octokit, path, content, message);
+      await this.commitFile(path, content, message);
       console.log(`Vault: wrote thought to ${path}`);
       return path;
     } catch (error) {
@@ -95,17 +88,12 @@ class VaultService {
       return null;
     }
 
-    const octokit = await this.getOctokit();
-    if (!octokit) {
-      return null;
-    }
-
     try {
       const path = this.getSourcePath(source);
       const content = this.formatSourceMarkdown(source, thoughtIds);
       const message = `Add source: ${source.title || this.generateSlug(source.raw.slice(0, 100), 50)}`;
 
-      await this.commitFile(octokit, path, content, message);
+      await this.commitFile(path, content, message);
       console.log(`Vault: wrote source to ${path}`);
       return path;
     } catch (error) {
@@ -305,36 +293,38 @@ class VaultService {
   /**
    * Commit a file to the GitHub repository
    */
-  private async commitFile(octokit: OctokitType, path: string, content: string, message: string): Promise<void> {
+  private async commitFile(path: string, content: string, message: string): Promise<void> {
     const { owner, repo } = this.config;
+    const endpoint = `/repos/${owner}/${repo}/contents/${path}`;
 
     // Check if file already exists (to get the SHA for updates)
     let sha: string | undefined;
-    try {
-      const { data } = await octokit.repos.getContent({
-        owner,
-        repo,
-        path,
-      });
-      if (!Array.isArray(data) && data.type === 'file') {
+    const getResult = await this.githubRequest('GET', endpoint);
+    
+    if (getResult.status === 200) {
+      const data = getResult.data as { sha?: string; type?: string };
+      if (data.type === 'file' && data.sha) {
         sha = data.sha;
       }
-    } catch (error: unknown) {
-      // File doesn't exist, which is fine for new files
-      if ((error as { status?: number }).status !== 404) {
-        throw error;
-      }
+    } else if (getResult.status !== 404) {
+      throw new Error(`GitHub API error: ${getResult.status} - ${JSON.stringify(getResult.data)}`);
     }
 
     // Create or update the file
-    await octokit.repos.createOrUpdateFileContents({
-      owner,
-      repo,
-      path,
+    const body: Record<string, unknown> = {
       message,
       content: Buffer.from(content).toString('base64'),
-      sha,  // Required for updates, undefined for new files
-    });
+    };
+
+    if (sha) {
+      body.sha = sha;  // Required for updates
+    }
+
+    const putResult = await this.githubRequest('PUT', endpoint, body);
+
+    if (putResult.status !== 200 && putResult.status !== 201) {
+      throw new Error(`GitHub API error: ${putResult.status} - ${JSON.stringify(putResult.data)}`);
+    }
   }
 }
 
