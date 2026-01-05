@@ -2,7 +2,6 @@ import {
   Thought,
   ThoughtInsert,
   Source,
-  SourceInsert,
 } from '../models';
 import {
   SupabaseService,
@@ -86,39 +85,5 @@ export class ThoughtRepository {
    */
   async getSources(thoughtId: string): Promise<Source[]> {
     return this.supabase.getThoughtSources(thoughtId);
-  }
-}
-
-export class SourceRepository {
-  constructor(private supabase: SupabaseService) {}
-
-  /**
-   * Save a source (conversation, article, etc.)
-   */
-  async save(source: SourceInsert): Promise<Source> {
-    return this.supabase.createSource(source);
-  }
-
-  /**
-   * Find a source by ID
-   */
-  async findById(id: string): Promise<Source | null> {
-    return this.supabase.getSource(id);
-  }
-
-  /**
-   * Create a conversation source from a transcript
-   */
-  async createFromConversation(
-    userId: string,
-    transcript: string,
-    title?: string
-  ): Promise<Source> {
-    return this.save({
-      userId,
-      type: 'conversation',
-      title: title || `Conversation ${new Date().toISOString().split('T')[0]}`,
-      raw: transcript,
-    });
   }
 }

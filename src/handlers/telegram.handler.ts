@@ -86,6 +86,11 @@ export class TelegramHandler {
       await this.handleHistory(ctx);
     });
 
+    // Load command - load a previous conversation into context
+    this.bot.command('load', async (ctx) => {
+      await this.handleLoad(ctx);
+    });
+
     // Discard command - delete a specific previous conversation
     this.bot.command('discard', async (ctx) => {
       await this.handleDiscard(ctx);
@@ -264,12 +269,124 @@ export class TelegramHandler {
     }
 
     try {
-      // Return empty list - conversations are memory-only now
-      await ctx.reply('No previous conversations found.\n\nAll conversations are now memory-only until extraction. Use /extract to save your current conversation.');
-      return;
+      // Fetch last 10 conversation sources from DB
+      const conversations = await this.sourceRepo.findByUser(userId, 'conversation', 10);
+
+      if (conversations.length === 0) {
+        await ctx.reply(
+          'No previous conversations found.\n\n' +
+          'Have a conversation and use /extract to save it, then it will appear here.'
+        );
+        return;
+      }
+
+      let response = `📜 *Previous Conversations* (${conversations.length})\n\n`;
+
+      conversations.forEach((conv, index) => {
+        const date = conv.createdAt.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+        const time = conv.createdAt.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+
+        // Get a preview of the conversation (first 100 chars of raw transcript)
+        const preview = conv.raw.length > 100
+          ? conv.raw.substring(0, 100).replace(/\n/g, ' ') + '...'
+          : conv.raw.replace(/\n/g, ' ');
+
+        const title = conv.title || 'Untitled';
+
+        response += `*${index + 1}. ${this.escapeMarkdown(title)}*\n`;
+        response += `📅 ${date} ${time}\n`;
+        response += `🆔 \`${conv.id.substring(0, 8)}\`\n`;
+        response += `💬 ${this.escapeMarkdown(preview)}\n\n`;
+      });
+
+      response += `\n💡 Use \`/load [id]\` to load a conversation into context`;
+
+      await ctx.reply(response, { parse_mode: 'Markdown' });
     } catch (error) {
       console.error('Failed to fetch conversation history:', error);
       await ctx.reply('Sorry, I could not retrieve your conversation history. Please try again.');
+    }
+  }
+
+  private async handleLoad(ctx: Context): Promise<void> {
+    const userId = ctx.from?.id.toString();
+    if (!userId) {
+      await ctx.reply('Unable to identify user.');
+      return;
+    }
+
+    // Extract conversation ID from command
+    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const conversationId = text.replace(/^\/load\s*/i, '').trim();
+
+    if (!conversationId) {
+      await ctx.reply(
+        '📂 *Load a Previous Conversation*\n\n' +
+        'Load a conversation into context to continue where you left off.\n\n' +
+        'Usage: `/load [id]`\n\n' +
+        'Use /history to see your previous conversations and their IDs.',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    try {
+      // Check if user has an active conversation
+      const currentMessages = this.conversationState.getMessages(userId);
+      if (currentMessages.length > 0) {
+        await ctx.reply(
+          'You have an active conversation with ' + currentMessages.length + ' messages.\n\n' +
+          'Please /extract or /clear it before loading a previous conversation.'
+        );
+        return;
+      }
+
+      // Find the source by ID (support both full UUID and partial)
+      let source = await this.sourceRepo.findById(conversationId);
+      
+      // If not found by exact ID, try partial match
+      if (!source) {
+        const conversations = await this.sourceRepo.findByUser(userId, 'conversation', 50);
+        source = conversations.find(c => c.id.startsWith(conversationId)) || null;
+      }
+
+      // Verify the source belongs to this user and is a conversation
+      if (!source || source.userId !== userId || source.type !== 'conversation') {
+        await ctx.reply(
+          `Conversation with ID "${conversationId}" not found.\n\n` +
+          'Use /history to see your available conversations.'
+        );
+        return;
+      }
+
+      // Load the conversation into memory
+      this.conversationState.loadConversationFromSource(userId, source);
+
+      const messages = this.conversationState.getMessages(userId);
+      const date = source.createdAt.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+
+      await ctx.reply(
+        `✅ *Conversation Loaded*\n\n` +
+        `*Title:* ${this.escapeMarkdown(source.title || 'Untitled')}\n` +
+        `*Date:* ${date}\n` +
+        `*Messages:* ${messages.length}\n\n` +
+        `You can continue the conversation now. Use /show to see the full transcript.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      console.error('Failed to load conversation:', error);
+      await ctx.reply('Sorry, I could not load that conversation. Please try again.');
     }
   }
 

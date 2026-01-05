@@ -1,5 +1,5 @@
 import { config } from '../config';
-import { Conversation, ConversationState, Message } from '../models';
+import { Conversation, ConversationState, Message, Source } from '../models';
 
 // NOTE: Conversations are memory-only in Phase 2.5+
 // They exist only until extraction, then become sources + thoughts
@@ -29,6 +29,26 @@ export class ConversationStateService {
       this.conversations.set(conversation.userId, state);
       this.loadedUsers.add(conversation.userId);
     }
+  }
+
+  /**
+   * Load a conversation from a Source (type='conversation') into memory
+   * This allows users to continue a previous conversation
+   */
+  loadConversationFromSource(userId: string, source: Source): void {
+    const messages = this.parseTranscript(source.raw);
+
+    const state: ConversationState = {
+      conversationId: source.id,
+      messages,
+      lastActivity: source.createdAt,
+      isActive: true,
+      lastSavedAt: source.createdAt,
+      messagesSinceLastSave: 0,
+    };
+
+    this.conversations.set(userId, state);
+    this.loadedUsers.add(userId);
   }
 
   hasLoadedUser(userId: string): boolean {

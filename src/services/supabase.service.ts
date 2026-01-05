@@ -278,6 +278,36 @@ export class SupabaseService {
     return data.map((item: any) => this.mapSource(item.sources));
   }
 
+  /**
+   * Get sources for a user, optionally filtered by type
+   * Returns most recent first
+   */
+  async getSourcesByUser(
+    userId: string,
+    type?: string,
+    limit: number = 10
+  ): Promise<Source[]> {
+    let query = this.client
+      .from('sources')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (type) {
+      query = query.eq('type', type);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Failed to fetch sources:', error);
+      throw new Error(`Failed to fetch sources: ${error.message}`);
+    }
+
+    return data.map((item: any) => this.mapSource(item));
+  }
+
   // Mappers for new types
   private mapSource(data: any): Source {
     return {
