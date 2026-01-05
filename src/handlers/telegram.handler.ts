@@ -302,7 +302,7 @@ export class TelegramHandler {
 
         response += `*${index + 1}. ${this.escapeMarkdown(title)}*\n`;
         response += `📅 ${date} ${time}\n`;
-        response += `🆔 \`${conv.id.substring(0, 8)}\`\n`;
+        response += `🆔 \`${conv.id}\`\n`;
         response += `💬 ${this.escapeMarkdown(preview)}\n\n`;
       });
 
