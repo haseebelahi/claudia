@@ -1,17 +1,19 @@
-import { Octokit } from '@octokit/rest';
-
 import { config } from '../config';
 import { Thought, Source } from '../models/knowledge-entry';
+
+// Octokit types - we'll dynamically import the actual module
+type OctokitType = InstanceType<typeof import('@octokit/rest').Octokit>;
 
 interface VaultConfig {
   enabled: boolean;
   owner: string;
   repo: string;
-  octokit: Octokit | null;
 }
 
 class VaultService {
   private config: VaultConfig;
+  private octokit: OctokitType | null = null;
+  private octokitPromise: Promise<OctokitType | null> | null = null;
 
   constructor() {
     const [owner, repo] = config.vault.githubRepo.split('/');
@@ -20,9 +22,6 @@ class VaultService {
       enabled: config.vault.enabled,
       owner: owner || '',
       repo: repo || '',
-      octokit: config.vault.enabled
-        ? new Octokit({ auth: config.vault.githubToken })
-        : null,
     };
 
     if (this.config.enabled) {
@@ -33,10 +32,44 @@ class VaultService {
   }
 
   /**
+   * Lazily initialize Octokit (ESM module requires dynamic import)
+   */
+  private async getOctokit(): Promise<OctokitType | null> {
+    if (!this.config.enabled) {
+      return null;
+    }
+
+    if (this.octokit) {
+      return this.octokit;
+    }
+
+    // Ensure we only import once
+    if (!this.octokitPromise) {
+      this.octokitPromise = (async () => {
+        try {
+          const { Octokit } = await import('@octokit/rest');
+          this.octokit = new Octokit({ auth: config.vault.githubToken });
+          return this.octokit;
+        } catch (error) {
+          console.error('Failed to initialize Octokit:', error);
+          return null;
+        }
+      })();
+    }
+
+    return this.octokitPromise;
+  }
+
+  /**
    * Write a thought to the vault as a Markdown file
    */
   async writeThought(thought: Thought, sourceIds?: string[]): Promise<string | null> {
-    if (!this.config.enabled || !this.config.octokit) {
+    if (!this.config.enabled) {
+      return null;
+    }
+
+    const octokit = await this.getOctokit();
+    if (!octokit) {
       return null;
     }
 
@@ -45,7 +78,7 @@ class VaultService {
       const content = this.formatThoughtMarkdown(thought, sourceIds);
       const message = `Add thought: ${this.generateSlug(thought.claim, 50)}`;
 
-      await this.commitFile(path, content, message);
+      await this.commitFile(octokit, path, content, message);
       console.log(`Vault: wrote thought to ${path}`);
       return path;
     } catch (error) {
@@ -58,7 +91,12 @@ class VaultService {
    * Write a source to the vault as a Markdown file
    */
   async writeSource(source: Source, thoughtIds?: string[]): Promise<string | null> {
-    if (!this.config.enabled || !this.config.octokit) {
+    if (!this.config.enabled) {
+      return null;
+    }
+
+    const octokit = await this.getOctokit();
+    if (!octokit) {
       return null;
     }
 
@@ -67,7 +105,7 @@ class VaultService {
       const content = this.formatSourceMarkdown(source, thoughtIds);
       const message = `Add source: ${source.title || this.generateSlug(source.raw.slice(0, 100), 50)}`;
 
-      await this.commitFile(path, content, message);
+      await this.commitFile(octokit, path, content, message);
       console.log(`Vault: wrote source to ${path}`);
       return path;
     } catch (error) {
@@ -267,12 +305,8 @@ class VaultService {
   /**
    * Commit a file to the GitHub repository
    */
-  private async commitFile(path: string, content: string, message: string): Promise<void> {
-    if (!this.config.octokit) {
-      throw new Error('Octokit not initialized');
-    }
-
-    const { owner, repo, octokit } = this.config;
+  private async commitFile(octokit: OctokitType, path: string, content: string, message: string): Promise<void> {
+    const { owner, repo } = this.config;
 
     // Check if file already exists (to get the SHA for updates)
     let sha: string | undefined;
